@@ -1,0 +1,10 @@
+[package]
+name = "ilattice3-mesh"
+version = "0.1.0"
+authors = ["Duncan <bonsairobo@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+ilattice3 = { git = 'https://github.com/bonsairobo/ilattice3.git' }
+rayon = "*"
+rendy-mesh = "0.4.1"
