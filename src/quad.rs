@@ -3,7 +3,6 @@ use crate::face::Face;
 use ilattice3 as lat;
 use ilattice3::{ChunkedLattice, Direction, IsEmpty, Lattice, Normal, PlaneSpanInfo, ALL_DIRECTIONS};
 use rayon::prelude::*;
-use rendy_mesh as mesh;
 use std::{
     cmp::{Ord, Ordering},
     collections::HashMap,
@@ -29,6 +28,13 @@ pub struct QuadCornerInfo {
     u_corner: lat::Point,
     v_corner: lat::Point,
     max: lat::Point,
+}
+
+pub struct QuadVertices {
+    pub positions: [[f32; 3]; 4],
+    pub tex_coords: [[f32; 2]; 4],
+    pub normal: [f32; 3],
+    pub tangent: [f32; 3],
 }
 
 impl Quad {
@@ -60,13 +66,7 @@ impl Quad {
     /// Extends the given `Vertices` object with the quad vertex attributes. Vertices are in world
     /// space, so we don't need a separate mesh and transform for each voxel (only for different
     /// voxel types).
-    pub fn extend_mesh_vertices(
-        &self,
-        positions_out: &mut Vec<mesh::Position>,
-        normals_out: &mut Vec<mesh::Normal>,
-        tangents_out: &mut Vec<mesh::Tangent>,
-        tex_coords_out: &mut Vec<mesh::TexCoord>,
-    ) {
+    pub fn extend_mesh_vertices(&self) -> QuadVertices {
         let n: lat::Point = self.normal.into();
 
         let QuadCornerInfo {
@@ -88,36 +88,34 @@ impl Quad {
         let max: [f32; 3] = (max + u + v + which_plane).into();
 
         // counter-clockwise winding
-        let (points, tex_coords) = match n_sign.cmp(&0) {
+        let (positions, tex_coords) = match n_sign.cmp(&0) {
             Ordering::Greater => (
                 [min.into(), u_corner.into(), v_corner.into(), max.into()],
                 [
-                    mesh::TexCoord([0.0, 0.0]),
-                    mesh::TexCoord([tex_max_u, 0.0]),
-                    mesh::TexCoord([0.0, tex_max_v]),
-                    mesh::TexCoord([tex_max_u, tex_max_v]),
+                    [0.0, 0.0],
+                    [tex_max_u, 0.0],
+                    [0.0, tex_max_v],
+                    [tex_max_u, tex_max_v],
                 ],
             ),
             Ordering::Less => (
                 [min.into(), v_corner.into(), u_corner.into(), max.into()],
                 [
-                    mesh::TexCoord([0.0, 0.0]),
-                    mesh::TexCoord([0.0, tex_max_v]),
-                    mesh::TexCoord([tex_max_u, 0.0]),
-                    mesh::TexCoord([tex_max_u, tex_max_v]),
+                    [0.0, 0.0],
+                    [0.0, tex_max_v],
+                    [tex_max_u, 0.0],
+                    [tex_max_u, tex_max_v],
                 ],
             ),
             Ordering::Equal => panic!("Zero normal!"),
         };
 
-        let n: [f32; 3] = n.into();
-        let u: [f32; 3] = u.into();
-        let u: [f32; 4] = [u[0], u[1], u[2], 1.0];
-
-        positions_out.extend_from_slice(&points);
-        normals_out.extend_from_slice(&[n.into(); 4]);
-        tangents_out.extend_from_slice(&[u.into(); 4]);
-        tex_coords_out.extend_from_slice(&tex_coords);
+        QuadVertices {
+            positions,
+            tex_coords,
+            normal: n.into(),
+            tangent: u.into(),
+        }
     }
 
     pub fn iter_boundary_points(&self) -> Box<dyn Iterator<Item = lat::Point>> {

@@ -7,4 +7,3 @@ edition = "2018"
 [dependencies]
 ilattice3 = { git = 'https://github.com/bonsairobo/ilattice3.git' }
 rayon = "*"
-rendy-mesh = "0.4.1"
