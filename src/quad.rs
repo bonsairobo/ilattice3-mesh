@@ -264,6 +264,8 @@ where
             extent.contains_world(p)
                 && !visited.get_world(p)
                 && q_face.is_visible(voxels)
+                // TODO: users might want to have unequal voxels that can still join the same quad
+                // (i.e. if they look the same)
                 && *p_val == *voxels.get_world(p)
         };
 
