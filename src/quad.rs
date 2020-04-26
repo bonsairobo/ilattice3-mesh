@@ -66,7 +66,7 @@ impl Quad {
     /// Extends the given `Vertices` object with the quad vertex attributes. Vertices are in world
     /// space, so we don't need a separate mesh and transform for each voxel (only for different
     /// voxel types).
-    pub fn extend_mesh_vertices(&self) -> QuadVertices {
+    pub fn mesh_vertices(&self) -> QuadVertices {
         let n: lat::Point = self.normal.into();
 
         let QuadCornerInfo {
