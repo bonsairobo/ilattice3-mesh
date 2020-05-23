@@ -237,7 +237,7 @@ fn grow_quad_extent(
 /// Greedily find visible quads (of the same type) in the plane.
 fn boundary_quads_in_plane<T>(voxels: &Lattice<T>, plane: Quad) -> Vec<(Quad, T)>
 where
-    T: Copy + Default + IsEmpty + Ord + PartialEq,
+    T: Copy + IsEmpty + PartialEq,
 {
     let Quad { extent, normal } = plane;
     let PlaneSpanInfo { u, v } = normal.get_plane_span_info();
@@ -283,7 +283,7 @@ fn boundary_quads_unidirectional<T>(
     normal: Normal,
 ) -> Vec<(Quad, T)>
 where
-    T: Copy + Default + IsEmpty + Ord + PartialEq + Send + Sync,
+    T: Copy + IsEmpty + PartialEq + Send + Sync,
 {
     // Iterate over slices in the direction of their normal vector.
     // Note that we skip the left-most plane because it will be visited in the opposite normal
@@ -344,7 +344,7 @@ where
 /// not unique and is not guaranteed to be optimal.
 pub fn boundary_quads<T>(voxels: &Lattice<T>, extent: lat::Extent) -> Vec<(Quad, T)>
 where
-    T: Copy + Default + IsEmpty + Ord + PartialEq + Send + Sync,
+    T: Copy + IsEmpty + PartialEq + Send + Sync,
 {
     ALL_DIRECTIONS
         .par_iter()
@@ -358,7 +358,7 @@ where
 /// not unique and is not guaranteed to be optimal.
 pub fn boundary_quads_chunked<T>(voxels: &ChunkedLattice<T>) -> Vec<(Quad, T)>
 where
-    T: Copy + Default + IsEmpty + Ord + PartialEq + Send + Sync,
+    T: Copy + Default + IsEmpty + PartialEq + Send + Sync,
 {
     voxels
         .chunk_keys()
