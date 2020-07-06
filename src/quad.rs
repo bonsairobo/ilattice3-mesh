@@ -1,7 +1,10 @@
 use crate::face::Face;
 
 use ilattice3 as lat;
-use ilattice3::{ChunkedLattice, Direction, IsEmpty, Lattice, Normal, PlaneSpanInfo, ALL_DIRECTIONS};
+use ilattice3::{
+    fill_extent, ChunkedLattice, Direction, GetExtent, GetWorld, IsEmpty, Lattice, Normal,
+    PlaneSpanInfo, ALL_DIRECTIONS,
+};
 use rayon::prelude::*;
 use std::{
     cmp::{Ord, Ordering},
@@ -270,7 +273,7 @@ where
         };
 
         let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
-        visited.fill_extent(&quad_extent, true);
+        fill_extent(&mut visited, &quad_extent, true);
         quads.push((Quad::new(quad_extent, normal), *p_val));
     }
 
@@ -393,7 +396,7 @@ fn build_quad_index_lattice(
         if q.normal.as_axis() != Normal::Axis(normal_dir) {
             continue;
         }
-        lattice.fill_extent(&q.extent, Some(QuadIndex(i)));
+        fill_extent(&mut lattice, &q.extent, Some(QuadIndex(i)));
     }
 
     lattice

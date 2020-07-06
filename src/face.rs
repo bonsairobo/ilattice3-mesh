@@ -1,5 +1,5 @@
 use ilattice3 as lat;
-use ilattice3::{IsEmpty, Lattice, Normal, PlaneSpanInfo};
+use ilattice3::{GetExtent, GetWorld, IsEmpty, Lattice, Normal, PlaneSpanInfo};
 
 /// One face of a voxel.
 pub struct Face {
@@ -131,7 +131,9 @@ mod tests {
         let extent = lat::Extent::from_min_and_local_supremum((0, 0, 0).into(), (2, 3, 3).into());
 
         Lattice::new_with_indexer(
-            extent, TestIndexer, TEST_LATTICE_VALUES.iter().map(|i| MyInt(*i)).collect()
+            extent,
+            TestIndexer,
+            TEST_LATTICE_VALUES.iter().map(|i| MyInt(*i)).collect(),
         )
     }
 
@@ -149,7 +151,7 @@ mod tests {
         let face = Face::new((1, 0, 1).into(), axis);
         assert_elements_eq(
             &face.adjacent_visible_face_values(&lattice),
-            &vec![MyInt(1), MyInt(8), MyInt(9)]
+            &vec![MyInt(1), MyInt(8), MyInt(9)],
         );
 
         let face = Face::new((0, 1, 2).into(), axis);
@@ -161,7 +163,7 @@ mod tests {
         let face = Face::new((1, 2, 2).into(), axis);
         assert_elements_eq(
             &face.adjacent_visible_face_values(&lattice),
-            &vec![MyInt(4), MyInt(6)]
+            &vec![MyInt(4), MyInt(6)],
         );
     }
 
@@ -173,13 +175,13 @@ mod tests {
         let face = Face::new((0, 1, 1).into(), axis);
         assert_elements_eq(
             &face.adjacent_visible_face_values(&lattice),
-            &vec![MyInt(1), MyInt(3), MyInt(8)]
+            &vec![MyInt(1), MyInt(3), MyInt(8)],
         );
 
         let face = Face::new((1, 0, 1).into(), axis);
         assert_elements_eq(
             &face.adjacent_visible_face_values(&lattice),
-            &vec![MyInt(1), MyInt(8), MyInt(9)]
+            &vec![MyInt(1), MyInt(8), MyInt(9)],
         );
 
         let face = Face::new((1, 2, 1).into(), axis);
@@ -191,7 +193,7 @@ mod tests {
         let face = Face::new((1, 2, 2).into(), axis);
         assert_elements_eq(
             &face.adjacent_visible_face_values(&lattice),
-            &vec![MyInt(4), MyInt(6)]
+            &vec![MyInt(4), MyInt(6)],
         );
     }
 }
