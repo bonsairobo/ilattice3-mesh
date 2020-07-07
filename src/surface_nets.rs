@@ -140,12 +140,10 @@ fn estimate_surface_edge_intersection(
     Some(position)
 }
 
-// For every edge that crosses the boundary, make a quad between the
-// "centers" of the four cubes touching that boundary. (Well, really, two
-// triangles) The "centers" are actually the vertex positions, found earlier.
-// (Also, make sure the triangles are facing the right way)
-// There's some hellish off-by-one conditions and whatnot that make this code
-// really gross.
+// For every edge that crosses the boundary, make a quad between the "centers" of the four cubes
+// touching that boundary. (Well, really, two triangles). The "centers" are actually the vertex
+// positions, found earlier. Also, make sure the triangles are facing the right way. There's some
+// hellish off-by-one conditions and whatnot that make this code really gross.
 fn make_all_triangles<V, T>(
     voxels: &V,
     grid_to_index: &HashMap<lat::Point, usize>,
@@ -227,10 +225,7 @@ fn make_triangle<V, T>(
     let v3 = *grid_to_index.get(&(*p - *axis2)).unwrap();
     let v4 = *grid_to_index.get(&(*p - *axis1 - *axis2)).unwrap();
     // optional addition to algorithm: split quad to triangles in a certain way
-    let p1 = positions[v1];
-    let p2 = positions[v2];
-    let p3 = positions[v3];
-    let p4 = positions[v4];
+    let (p1, p2, p3, p4) = (positions[v1], positions[v2], positions[v3], positions[v4]);
     fn sq_dist(a: [f32; 3], b: [f32; 3]) -> f32 {
         let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
@@ -243,44 +238,20 @@ fn make_triangle<V, T>(
         match face_result {
             FaceResult::NoFace => (),
             FaceResult::FacePositive => {
-                indices.push(v1);
-                indices.push(v2);
-                indices.push(v4);
-
-                indices.push(v1);
-                indices.push(v4);
-                indices.push(v3);
+                indices.extend([v1, v2, v4, v1, v4, v3].iter());
             }
             FaceResult::FaceNegative => {
-                indices.push(v1);
-                indices.push(v4);
-                indices.push(v2);
-
-                indices.push(v1);
-                indices.push(v3);
-                indices.push(v4);
+                indices.extend([v1, v4, v2, v1, v3, v4].iter());
             }
         }
     } else {
         match face_result {
             FaceResult::NoFace => (),
             FaceResult::FacePositive => {
-                indices.push(v2);
-                indices.push(v4);
-                indices.push(v3);
-
-                indices.push(v2);
-                indices.push(v3);
-                indices.push(v1);
+                indices.extend([v2, v4, v3, v2, v3, v1].iter());
             }
             FaceResult::FaceNegative => {
-                indices.push(v2);
-                indices.push(v3);
-                indices.push(v4);
-
-                indices.push(v2);
-                indices.push(v1);
-                indices.push(v3);
+                indices.extend([v2, v3, v4, v2, v1, v3].iter());
             }
         }
     }
