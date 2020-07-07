@@ -226,15 +226,8 @@ fn make_triangle<V, T>(
     let v4 = *grid_to_index.get(&(*p - *axis1 - *axis2)).unwrap();
     // optional addition to algorithm: split quad to triangles in a certain way
     let (p1, p2, p3, p4) = (positions[v1], positions[v2], positions[v3], positions[v4]);
-    fn sq_dist(a: [f32; 3], b: [f32; 3]) -> f32 {
-        let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-
-        d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
-    }
-    let d14 = sq_dist(p1, p4);
-    let d23 = sq_dist(p2, p3);
     // Split the quad along the shorter axis, rather than the longer one.
-    if d14 < d23 {
+    if sq_dist(p1, p4) < sq_dist(p2, p3) {
         match face_result {
             FaceResult::NoFace => (),
             FaceResult::FacePositive => {
@@ -255,6 +248,12 @@ fn make_triangle<V, T>(
             }
         }
     }
+}
+
+fn sq_dist(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
 enum FaceResult {
