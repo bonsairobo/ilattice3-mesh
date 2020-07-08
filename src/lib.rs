@@ -10,4 +10,4 @@ pub use quad::{
     boundary_quads, boundary_quads_chunked, build_quad_adjacency_lists, Quad, QuadCornerInfo,
     QuadIndex, QuadVertices,
 };
-pub use surface_nets::{surface_nets, SurfaceNetsVoxel};
+pub use surface_nets::{surface_nets, PosNormMesh, SurfaceNetsVoxel};
