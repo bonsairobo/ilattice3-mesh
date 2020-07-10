@@ -1,17 +1,10 @@
-use crate::face::Face;
-
-use ilattice3 as lat;
-use ilattice3::{
-    fill_extent, prelude::*, ChunkedLatticeMap, Direction, IsEmpty, Normal, PlaneSpanInfo,
-    VecLatticeMap, ALL_DIRECTIONS,
-};
-use rayon::prelude::*;
+use ilattice3::{Extent, Normal, PlaneSpanInfo, Point};
 use std::cmp::{Ord, Ordering};
 
 /// The face of a rectangular prism of voxels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quad {
-    pub extent: lat::Extent,
+    pub extent: Extent,
     pub normal: Normal,
 }
 
@@ -24,10 +17,10 @@ pub struct QuadCornerInfo {
     tex_max_v: f32,
 
     // Corner lattice points.
-    min: lat::Point,
-    u_corner: lat::Point,
-    v_corner: lat::Point,
-    max: lat::Point,
+    min: Point,
+    u_corner: Point,
+    v_corner: Point,
+    max: Point,
 }
 
 pub struct QuadVertices {
@@ -38,7 +31,7 @@ pub struct QuadVertices {
 }
 
 impl Quad {
-    pub fn new(extent: lat::Extent, normal: Normal) -> Self {
+    pub fn new(extent: Extent, normal: Normal) -> Self {
         Quad { extent, normal }
     }
 
@@ -67,7 +60,7 @@ impl Quad {
     /// space, so we don't need a separate mesh and transform for each voxel (only for different
     /// voxel types).
     pub fn mesh_vertices(&self) -> QuadVertices {
-        let n: lat::Point = self.normal.into();
+        let n: Point = self.normal.into();
 
         let QuadCornerInfo {
             span: PlaneSpanInfo { u, v },
@@ -118,32 +111,8 @@ impl Quad {
         }
     }
 
-    pub fn iter_boundary_points(&self) -> Box<dyn Iterator<Item = lat::Point>> {
-        if self.extent.volume() == 1 {
-            Box::new(self.extent.into_iter())
-        } else {
-            let QuadCornerInfo {
-                span: PlaneSpanInfo { u, v },
-                min,
-                u_corner,
-                v_corner,
-                max,
-                ..
-            } = self.get_corner_info();
-
-            let walls = vec![
-                lat::Extent::from_min_and_world_max(min, u_corner - u),
-                lat::Extent::from_min_and_world_max(min + v, v_corner),
-                lat::Extent::from_min_and_world_max(u_corner, max - v),
-                lat::Extent::from_min_and_world_max(v_corner + u, max),
-            ];
-
-            Box::new(walls.into_iter().filter(|w| !w.is_empty()).flatten())
-        }
-    }
-
     pub fn get_edges(&self) -> [[[f32; 3]; 2]; 4] {
-        let n: lat::Point = self.normal.into();
+        let n: Point = self.normal.into();
 
         let QuadCornerInfo {
             span: PlaneSpanInfo { u, v },
@@ -168,278 +137,5 @@ impl Quad {
             [u_corner, max],
             [v_corner, max],
         ]
-    }
-}
-
-/// This is the "greedy" part of finding quads.
-fn grow_quad_extent(
-    min: &lat::Point,
-    u: &lat::Point,
-    v: &lat::Point,
-    point_can_join_quad_fn: &impl Fn(&lat::Point) -> bool,
-) -> lat::Extent {
-    // Grow quad:
-    // (1) in u direction until reaching a point that can't join.
-    let mut max = *min;
-    loop {
-        let next_max = max + *u;
-        if !point_can_join_quad_fn(&next_max) {
-            break;
-        }
-        max = next_max;
-    }
-    // (2) in v direction until reaching row that can't join (entirely).
-    let mut row = lat::Extent::from_min_and_world_max(*min, max);
-    'outer: loop {
-        let next_row = row + *v;
-        for row_p in next_row {
-            if !point_can_join_quad_fn(&row_p) {
-                break 'outer;
-            }
-        }
-        row = next_row;
-    }
-
-    lat::Extent::from_min_and_world_max(*min, row.get_world_max())
-}
-
-/// Greedily find visible quads (of the same type) in the plane.
-fn boundary_quads_in_plane<T>(voxels: &VecLatticeMap<T>, plane: Quad) -> Vec<(Quad, T)>
-where
-    T: Copy + IsEmpty + PartialEq,
-{
-    let Quad { extent, normal } = plane;
-    let PlaneSpanInfo { u, v } = normal.get_plane_span_info();
-    let n = lat::Point::from(normal);
-
-    let mut visited = VecLatticeMap::<_, lat::YLevelsIndexer>::fill(extent, false);
-
-    let mut quads = vec![];
-    for p in &extent {
-        let p_val = voxels.get_world(&p);
-        if p_val.is_empty() || visited.get_world(&p) {
-            continue;
-        }
-
-        let face = Face::new(p, Normal::Vector(n));
-
-        if !face.is_visible(voxels) {
-            continue;
-        }
-
-        let point_can_join_quad = |p: &lat::Point| {
-            let q_face = Face::new(*p, Normal::Vector(n));
-
-            extent.contains_world(p)
-                && !visited.get_world(p)
-                && q_face.is_visible(voxels)
-                // TODO: users might want to have unequal voxels that can still join the same quad
-                // (i.e. if they look the same)
-                && p_val == voxels.get_world(p)
-        };
-
-        let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
-        fill_extent(&mut visited, &quad_extent, true);
-        quads.push((Quad::new(quad_extent, normal), p_val));
-    }
-
-    quads
-}
-
-fn boundary_quads_unidirectional<T>(
-    voxels: &VecLatticeMap<T>,
-    extent: lat::Extent,
-    normal: Normal,
-) -> Vec<(Quad, T)>
-where
-    T: Copy + IsEmpty + PartialEq + Send + Sync,
-{
-    // Iterate over slices in the direction of their normal vector.
-    // Note that we skip the left-most plane because it will be visited in the opposite normal
-    // direction.
-    //
-    //               1st plane
-    //                  v
-    //  normal -->  | s | s | ... | s | s |
-    //                ^
-    //             1st slice
-    //
-    // For each plane, find visible quads of the same voxel type.
-
-    let (start_slice_min, n_slices, slice_local_sup) = {
-        let min = extent.get_minimum();
-        let lsup = extent.get_local_supremum();
-
-        match normal.into() {
-            Direction::PosX => (min, lsup.x, [1, lsup.y, lsup.z].into()),
-            Direction::PosY => (min, lsup.y, [lsup.x, 1, lsup.z].into()),
-            Direction::PosZ => (min, lsup.z, [lsup.x, lsup.y, 1].into()),
-            Direction::NegX => (
-                min + [lsup.x - 1, 0, 0].into(),
-                lsup.x,
-                [1, lsup.y, lsup.z].into(),
-            ),
-            Direction::NegY => (
-                min + [0, lsup.y - 1, 0].into(),
-                lsup.y,
-                [lsup.x, 1, lsup.z].into(),
-            ),
-            Direction::NegZ => (
-                min + [0, 0, lsup.z - 1].into(),
-                lsup.z,
-                [lsup.x, lsup.y, 1].into(),
-            ),
-        }
-    };
-
-    (0..n_slices)
-        .into_par_iter()
-        .map(|i| {
-            let quad = Quad::new(
-                lat::Extent::from_min_and_local_supremum(
-                    start_slice_min + lat::Point::from(normal) * i,
-                    slice_local_sup,
-                ),
-                normal,
-            );
-
-            boundary_quads_in_plane(voxels, quad)
-        })
-        .flatten()
-        .collect()
-}
-
-/// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
-/// not unique and is not guaranteed to be optimal.
-pub fn boundary_quads<T>(voxels: &VecLatticeMap<T>, extent: lat::Extent) -> Vec<(Quad, T)>
-where
-    T: Copy + IsEmpty + PartialEq + Send + Sync,
-{
-    ALL_DIRECTIONS
-        .par_iter()
-        .cloned()
-        .map(|d| boundary_quads_unidirectional(voxels, extent, Normal::Axis(d)))
-        .flatten()
-        .collect()
-}
-
-/// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
-/// not unique and is not guaranteed to be optimal.
-pub fn boundary_quads_chunked<T>(voxels: &ChunkedLatticeMap<T>) -> Vec<(Quad, T)>
-where
-    T: Copy + Default + IsEmpty + PartialEq + Send + Sync,
-{
-    voxels
-        .chunk_keys()
-        .cloned()
-        .collect::<Vec<lat::Point>>()
-        .into_par_iter()
-        .map(|chunk_key| {
-            // Need a padded extent to check adjacent points, but we only want to create quads
-            // containing points in the chunk.
-            let consider_extent = voxels.extent_for_chunk_key(&chunk_key);
-            let padded_extent = consider_extent.padded(1);
-
-            boundary_quads(
-                &voxels.copy_extent_into_new_lattice(padded_extent),
-                consider_extent,
-            )
-        })
-        .flatten()
-        .collect()
-}
-
-// ████████╗███████╗███████╗████████╗███████╗
-// ╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝██╔════╝
-//    ██║   █████╗  ███████╗   ██║   ███████╗
-//    ██║   ██╔══╝  ╚════██║   ██║   ╚════██║
-//    ██║   ███████╗███████║   ██║   ███████║
-//    ╚═╝   ╚══════╝╚══════╝   ╚═╝   ╚══════╝
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_util::assert_elements_eq;
-
-    #[test]
-    fn test_quad_iter_boundary_points_pos_x_normal_1x1() {
-        let extent = lat::Extent::from_min_and_world_max((1, 1, 1).into(), (1, 1, 1).into());
-        let quad = Quad::new(extent, Normal::Axis(Direction::PosX));
-
-        let boundary_points = quad.iter_boundary_points().collect();
-        assert_elements_eq(&boundary_points, &vec![(1, 1, 1).into()]);
-    }
-
-    #[test]
-    fn test_quad_iter_boundary_points_pos_x_normal_2x1() {
-        let extent = lat::Extent::from_min_and_world_max((1, 1, 1).into(), (1, 2, 1).into());
-        let quad = Quad::new(extent, Normal::Axis(Direction::PosX));
-
-        let boundary_points = quad.iter_boundary_points().collect();
-        assert_elements_eq(&boundary_points, &vec![(1, 1, 1).into(), (1, 2, 1).into()]);
-    }
-
-    #[test]
-    fn test_quad_iter_boundary_points_pos_x_normal_2x2() {
-        let extent = lat::Extent::from_min_and_world_max((1, 1, 1).into(), (1, 2, 2).into());
-        let quad = Quad::new(extent, Normal::Axis(Direction::PosX));
-
-        let boundary_points = quad.iter_boundary_points().collect();
-        assert_elements_eq(
-            &boundary_points,
-            &vec![
-                (1, 1, 1).into(),
-                (1, 2, 1).into(),
-                (1, 1, 2).into(),
-                (1, 2, 2).into(),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_quad_iter_boundary_points_pos_z_normal() {
-        let extent = lat::Extent::from_min_and_world_max((1, 1, 1).into(), (3, 5, 1).into());
-        let quad = Quad::new(extent, Normal::Axis(Direction::PosZ));
-
-        let boundary_points = quad.iter_boundary_points().collect();
-        assert_elements_eq(
-            &boundary_points,
-            &vec![
-                (1, 1, 1).into(),
-                (2, 1, 1).into(),
-                (3, 1, 1).into(),
-                (3, 2, 1).into(),
-                (3, 3, 1).into(),
-                (3, 4, 1).into(),
-                (3, 5, 1).into(),
-                (2, 5, 1).into(),
-                (1, 5, 1).into(),
-                (1, 4, 1).into(),
-                (1, 3, 1).into(),
-                (1, 2, 1).into(),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_quad_iter_boundary_points_neg_y_normal() {
-        let extent = lat::Extent::from_min_and_world_max((2, -1, 0).into(), (3, -1, 3).into());
-        let quad = Quad::new(extent, Normal::Axis(Direction::NegY));
-
-        let boundary_points = quad.iter_boundary_points().collect();
-        assert_elements_eq(
-            &boundary_points,
-            &vec![
-                (2, -1, 0).into(),
-                (3, -1, 0).into(),
-                (3, -1, 1).into(),
-                (3, -1, 2).into(),
-                (3, -1, 3).into(),
-                (3, -1, 3).into(),
-                (2, -1, 3).into(),
-                (2, -1, 2).into(),
-                (2, -1, 1).into(),
-            ],
-        );
     }
 }
