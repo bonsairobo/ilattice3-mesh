@@ -1,5 +1,5 @@
 use ilattice3 as lat;
-use ilattice3::{GetExtent, GetWorld, IsEmpty, Lattice, Normal, PlaneSpanInfo};
+use ilattice3::{prelude::*, IsEmpty, Normal, PlaneSpanInfo, VecLatticeMap};
 
 /// One face of a voxel.
 pub struct Face {
@@ -16,14 +16,14 @@ impl Face {
         self.point + self.normal.into()
     }
 
-    pub fn is_visible<T, I>(&self, voxels: &Lattice<T, I>) -> bool
+    pub fn is_visible<T, I>(&self, voxels: &VecLatticeMap<T, I>) -> bool
     where
         T: IsEmpty,
         I: lat::Indexer,
     {
         let adj_p = self.adjacent_point();
 
-        !voxels.get_extent().contains_world(&adj_p) || voxels.get_world(&adj_p).is_empty()
+        !voxels.get_extent().contains_world(&adj_p) || voxels.get_world_ref(&adj_p).is_empty()
     }
 
     #[allow(dead_code)]
@@ -65,21 +65,21 @@ impl Face {
 
     /// Returns all values from visible faces that share an edge with the given visible face.
     #[allow(dead_code)]
-    pub fn adjacent_visible_face_values<T, I>(&self, voxels: &Lattice<T, I>) -> Vec<T>
+    pub fn adjacent_visible_face_values<T, I>(&self, voxels: &VecLatticeMap<T, I>) -> Vec<T>
     where
         T: Copy + IsEmpty + Ord,
         I: lat::Indexer,
     {
         assert!(self.is_visible(voxels));
 
-        let mut vals = vec![*voxels.get_world(&self.point)];
+        let mut vals = vec![voxels.get_world(&self.point)];
         for adj_face in &self.adjacent_faces_with_vectors() {
             if !voxels.get_extent().contains_world(&adj_face.point) {
                 continue;
             }
             let val = voxels.get_world(&adj_face.point);
             if !val.is_empty() && adj_face.is_visible(voxels) {
-                vals.push(*val);
+                vals.push(val);
             }
         }
         vals.sort();

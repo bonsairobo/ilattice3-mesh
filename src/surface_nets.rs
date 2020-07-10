@@ -1,7 +1,7 @@
 // Adapted from the surface-nets crate by khyperia.
 
 use ilattice3 as lat;
-use ilattice3::prelude::*;
+use ilattice3::{prelude::*, Extent};
 use std::{collections::HashMap, hash::Hash};
 
 pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
@@ -35,17 +35,17 @@ impl PosNormMesh {
 }
 
 /// Returns the map from material ID to (positions, normals, indices) for the isosurface.
-pub fn surface_nets<V, T, M>(voxels: &V) -> HashMap<M, PosNormMesh>
+pub fn surface_nets<V, T, M>(voxels: &V, extent: &Extent) -> HashMap<M, PosNormMesh>
 where
-    V: GetExtent + GetWorld<T>,
+    V: GetWorldRef<T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     // Find all vertex positions. Addtionally, create a hashmap from grid position to vertex index.
-    let (positions, normals, voxel_to_index) = estimate_surface(voxels);
+    let (positions, normals, voxel_to_index) = estimate_surface(voxels, extent);
 
     // Find all triangles (2 per quad), in the form of [index, index, index] triples.
-    let (indices, quad_materials) = make_all_quads(voxels, &voxel_to_index, &positions);
+    let (indices, quad_materials) = make_all_quads(voxels, extent, &voxel_to_index, &positions);
 
     // Assign each triangle a material.
     split_mesh_by_material(
@@ -87,16 +87,17 @@ where
 
 fn estimate_surface<V, T, M>(
     voxels: &V,
+    extent: &Extent,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, HashMap<lat::Point, usize>)
 where
-    V: GetExtent + GetWorld<T>,
+    V: GetWorldRef<T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut voxel_to_index = HashMap::new();
-    for point in voxels.get_extent().add_to_supremum(&[-1, -1, -1].into()) {
+    for point in extent.add_to_supremum(&[-1, -1, -1].into()) {
         if let Some((surface_point, normal)) = estimate_surface_point(voxels, &point) {
             voxel_to_index.insert(point, positions.len());
             positions.push(surface_point);
@@ -137,7 +138,7 @@ const CUBE_EDGES: [(usize, usize); 12] = [
 // Third, take the average of all these points for all edges (for edges that have crossings).
 fn estimate_surface_point<V, T, M>(voxels: &V, point: &lat::Point) -> Option<([f32; 3], [f32; 3])>
 where
-    V: GetExtent + GetWorld<T>,
+    V: GetWorldRef<T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -146,7 +147,7 @@ where
     for (i, dist) in dists.iter_mut().enumerate() {
         let cube_corner =
             *point + lat::Point::new((i & 1) as i32, ((i >> 1) & 1) as i32, ((i >> 2) & 1) as i32);
-        *dist = voxels.get_world(&cube_corner).distance();
+        *dist = voxels.get_world_ref(&cube_corner).distance();
     }
 
     let edge_crossings = CUBE_EDGES.iter().filter_map(|&(offset1, offset2)| {
@@ -219,17 +220,17 @@ fn estimate_surface_edge_intersection(
 // whatnot that make this code really gross.
 fn make_all_quads<V, T, M>(
     voxels: &V,
+    extent: &Extent,
     voxel_to_index: &HashMap<lat::Point, usize>,
     positions: &[[f32; 3]],
 ) -> (Vec<usize>, Vec<M>)
 where
-    V: GetExtent + GetWorld<T>,
+    V: GetWorldRef<T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     let mut indices = Vec::new();
     let mut quad_materials = Vec::new();
-    let extent = voxels.get_extent();
     let min = extent.get_minimum();
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
         // Do edges parallel with the X axis
@@ -290,7 +291,7 @@ fn maybe_make_quad<V, T, M>(
     indices: &mut Vec<usize>,
     materials: &mut Vec<M>,
 ) where
-    V: GetWorld<T>,
+    V: GetWorldRef<T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -313,22 +314,26 @@ fn maybe_make_quad<V, T, M>(
     let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => {
-                ([v1, v2, v4, v1, v4, v3], voxels.get_world(&p1).material())
-            }
-            FaceResult::FaceNegative => {
-                ([v1, v4, v2, v1, v3, v4], voxels.get_world(&p2).material())
-            }
+            FaceResult::FacePositive => (
+                [v1, v2, v4, v1, v4, v3],
+                voxels.get_world_ref(&p1).material(),
+            ),
+            FaceResult::FaceNegative => (
+                [v1, v4, v2, v1, v3, v4],
+                voxels.get_world_ref(&p2).material(),
+            ),
         }
     } else {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => {
-                ([v2, v4, v3, v2, v3, v1], voxels.get_world(&p1).material())
-            }
-            FaceResult::FaceNegative => {
-                ([v2, v3, v4, v2, v1, v3], voxels.get_world(&p2).material())
-            }
+            FaceResult::FacePositive => (
+                [v2, v4, v3, v2, v3, v1],
+                voxels.get_world_ref(&p1).material(),
+            ),
+            FaceResult::FaceNegative => (
+                [v2, v3, v4, v2, v1, v3],
+                voxels.get_world_ref(&p2).material(),
+            ),
         }
     };
     indices.extend(quad.iter());
@@ -350,13 +355,13 @@ enum FaceResult {
 // Determine if the sign of the SDF flips between p1 and p2
 fn is_face<V, T, M>(voxels: &V, p1: &lat::Point, p2: &lat::Point) -> FaceResult
 where
-    V: GetWorld<T>,
+    V: GetWorldRef<T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     match (
-        voxels.get_world(p1).distance() < 0.0,
-        voxels.get_world(p2).distance() < 0.0,
+        voxels.get_world_ref(p1).distance() < 0.0,
+        voxels.get_world_ref(p2).distance() < 0.0,
     ) {
         (true, false) => FaceResult::FacePositive,
         (false, true) => FaceResult::FaceNegative,

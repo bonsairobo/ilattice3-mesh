@@ -2,8 +2,8 @@ use crate::face::Face;
 
 use ilattice3 as lat;
 use ilattice3::{
-    fill_extent, ChunkedLattice, Direction, GetExtent, GetWorld, IsEmpty, Lattice, Normal,
-    PlaneSpanInfo, ALL_DIRECTIONS,
+    fill_extent, prelude::*, ChunkedLatticeMap, Direction, IsEmpty, Normal, PlaneSpanInfo,
+    VecLatticeMap, ALL_DIRECTIONS,
 };
 use rayon::prelude::*;
 use std::{
@@ -148,7 +148,7 @@ impl Quad {
     fn build_adjacency_list(
         &self,
         self_index: QuadIndex,
-        index_lattices: &HashMap<lat::Point, Lattice<Option<QuadIndex>>>,
+        index_lattices: &HashMap<lat::Point, VecLatticeMap<Option<QuadIndex>>>,
     ) -> Vec<QuadIndex> {
         // Look up the indices for faces adjacent to faces on the perimeter of the quad. We are
         // guaranteed to only get faces in or adjacent to the quad, since there shouldn't be
@@ -166,7 +166,7 @@ impl Quad {
                     continue;
                 }
                 if let Some(index) = lat.get_world(&adj_face.point) {
-                    adjacent_indices.push(*index);
+                    adjacent_indices.push(index);
                 }
             }
         }
@@ -238,7 +238,7 @@ fn grow_quad_extent(
 }
 
 /// Greedily find visible quads (of the same type) in the plane.
-fn boundary_quads_in_plane<T>(voxels: &Lattice<T>, plane: Quad) -> Vec<(Quad, T)>
+fn boundary_quads_in_plane<T>(voxels: &VecLatticeMap<T>, plane: Quad) -> Vec<(Quad, T)>
 where
     T: Copy + IsEmpty + PartialEq,
 {
@@ -246,12 +246,12 @@ where
     let PlaneSpanInfo { u, v } = normal.get_plane_span_info();
     let n = lat::Point::from(normal);
 
-    let mut visited = Lattice::<_, lat::YLevelsIndexer>::fill(extent, false);
+    let mut visited = VecLatticeMap::<_, lat::YLevelsIndexer>::fill(extent, false);
 
     let mut quads = vec![];
     for p in &extent {
         let p_val = voxels.get_world(&p);
-        if p_val.is_empty() || *visited.get_world(&p) {
+        if p_val.is_empty() || visited.get_world(&p) {
             continue;
         }
 
@@ -269,19 +269,19 @@ where
                 && q_face.is_visible(voxels)
                 // TODO: users might want to have unequal voxels that can still join the same quad
                 // (i.e. if they look the same)
-                && *p_val == *voxels.get_world(p)
+                && p_val == voxels.get_world(p)
         };
 
         let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
         fill_extent(&mut visited, &quad_extent, true);
-        quads.push((Quad::new(quad_extent, normal), *p_val));
+        quads.push((Quad::new(quad_extent, normal), p_val));
     }
 
     quads
 }
 
 fn boundary_quads_unidirectional<T>(
-    voxels: &Lattice<T>,
+    voxels: &VecLatticeMap<T>,
     extent: lat::Extent,
     normal: Normal,
 ) -> Vec<(Quad, T)>
@@ -345,7 +345,7 @@ where
 
 /// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
 /// not unique and is not guaranteed to be optimal.
-pub fn boundary_quads<T>(voxels: &Lattice<T>, extent: lat::Extent) -> Vec<(Quad, T)>
+pub fn boundary_quads<T>(voxels: &VecLatticeMap<T>, extent: lat::Extent) -> Vec<(Quad, T)>
 where
     T: Copy + IsEmpty + PartialEq + Send + Sync,
 {
@@ -359,7 +359,7 @@ where
 
 /// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
 /// not unique and is not guaranteed to be optimal.
-pub fn boundary_quads_chunked<T>(voxels: &ChunkedLattice<T>) -> Vec<(Quad, T)>
+pub fn boundary_quads_chunked<T>(voxels: &ChunkedLatticeMap<T>) -> Vec<(Quad, T)>
 where
     T: Copy + Default + IsEmpty + PartialEq + Send + Sync,
 {
@@ -390,8 +390,8 @@ fn build_quad_index_lattice(
     normal_dir: Direction,
     extent: lat::Extent,
     quads: &[Quad],
-) -> Lattice<Option<QuadIndex>> {
-    let mut lattice = Lattice::fill(extent, None);
+) -> VecLatticeMap<Option<QuadIndex>> {
+    let mut lattice = VecLatticeMap::fill(extent, None);
     for (i, q) in quads.iter().enumerate() {
         if q.normal.as_axis() != Normal::Axis(normal_dir) {
             continue;
@@ -409,7 +409,7 @@ pub fn build_quad_adjacency_lists(extent: lat::Extent, quads: &[Quad]) -> Vec<Ve
     // then write the quad index of each face into its points. On a second pass, look at points
     // adjacent to each quad to determine the adjacent quad indices.
 
-    let index_lattices: HashMap<lat::Point, Lattice<Option<QuadIndex>>> = ALL_DIRECTIONS
+    let index_lattices: HashMap<lat::Point, VecLatticeMap<Option<QuadIndex>>> = ALL_DIRECTIONS
         .par_iter()
         .cloned()
         .map(|d| (d.into(), build_quad_index_lattice(d, extent, quads)))
