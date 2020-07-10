@@ -6,8 +6,5 @@ pub mod surface_nets;
 mod test_util;
 
 pub use face::Face;
-pub use quad::{
-    boundary_quads, boundary_quads_chunked, build_quad_adjacency_lists, Quad, QuadCornerInfo,
-    QuadIndex, QuadVertices,
-};
+pub use quad::{boundary_quads, boundary_quads_chunked, Quad, QuadCornerInfo, QuadVertices};
 pub use surface_nets::{surface_nets, PosNormMesh, SurfaceNetsVoxel};

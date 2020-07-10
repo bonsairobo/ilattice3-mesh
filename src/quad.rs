@@ -6,10 +6,7 @@ use ilattice3::{
     VecLatticeMap, ALL_DIRECTIONS,
 };
 use rayon::prelude::*;
-use std::{
-    cmp::{Ord, Ordering},
-    collections::HashMap,
-};
+use std::cmp::{Ord, Ordering};
 
 /// The face of a rectangular prism of voxels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -143,37 +140,6 @@ impl Quad {
 
             Box::new(walls.into_iter().filter(|w| !w.is_empty()).flatten())
         }
-    }
-
-    fn build_adjacency_list(
-        &self,
-        self_index: QuadIndex,
-        index_lattices: &HashMap<lat::Point, VecLatticeMap<Option<QuadIndex>>>,
-    ) -> Vec<QuadIndex> {
-        // Look up the indices for faces adjacent to faces on the perimeter of the quad. We are
-        // guaranteed to only get faces in or adjacent to the quad, since there shouldn't be
-        // non-null voxels on top of the quad (else it wouldn't be visible). This logic is similar
-        // to `adjacent_visible_face_values`, but differs because
-        //   (1) we have a map of lattices keyed by normal vector instead of just a single lattice
-        //   (2) we can assume all adjacent faces are visible or null
-        //   (3) we only need to look at boundary points of the quad
-        let mut adjacent_indices = vec![self_index];
-        for p in self.iter_boundary_points() {
-            let quad_boundary_face = Face::new(p, self.normal);
-            for adj_face in &quad_boundary_face.adjacent_faces_with_axes() {
-                let lat = &index_lattices[&adj_face.normal.into()];
-                if !lat.get_extent().contains_world(&adj_face.point) {
-                    continue;
-                }
-                if let Some(index) = lat.get_world(&adj_face.point) {
-                    adjacent_indices.push(index);
-                }
-            }
-        }
-        adjacent_indices.sort();
-        adjacent_indices.dedup();
-
-        adjacent_indices
     }
 
     pub fn get_edges(&self) -> [[[f32; 3]; 2]; 4] {
@@ -380,45 +346,6 @@ where
             )
         })
         .flatten()
-        .collect()
-}
-
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-pub struct QuadIndex(usize);
-
-fn build_quad_index_lattice(
-    normal_dir: Direction,
-    extent: lat::Extent,
-    quads: &[Quad],
-) -> VecLatticeMap<Option<QuadIndex>> {
-    let mut lattice = VecLatticeMap::fill(extent, None);
-    for (i, q) in quads.iter().enumerate() {
-        if q.normal.as_axis() != Normal::Axis(normal_dir) {
-            continue;
-        }
-        fill_extent(&mut lattice, &q.extent, Some(QuadIndex(i)));
-    }
-
-    lattice
-}
-
-/// Returns indices of adjacent quads for each quad.
-#[allow(dead_code)]
-pub fn build_quad_adjacency_lists(extent: lat::Extent, quads: &[Quad]) -> Vec<Vec<QuadIndex>> {
-    // O(quads) time algorithm using O(voxels) memory. Create a lattice for each normal direction,
-    // then write the quad index of each face into its points. On a second pass, look at points
-    // adjacent to each quad to determine the adjacent quad indices.
-
-    let index_lattices: HashMap<lat::Point, VecLatticeMap<Option<QuadIndex>>> = ALL_DIRECTIONS
-        .par_iter()
-        .cloned()
-        .map(|d| (d.into(), build_quad_index_lattice(d, extent, quads)))
-        .collect();
-
-    quads
-        .par_iter()
-        .enumerate()
-        .map(|(i, q)| q.build_adjacency_list(QuadIndex(i), &index_lattices))
         .collect()
 }
 
