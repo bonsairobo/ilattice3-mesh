@@ -37,7 +37,7 @@ impl PosNormMesh {
 /// Returns the map from material ID to (positions, normals, indices) for the isosurface.
 pub fn surface_nets<V, T, M>(voxels: &V, extent: &Extent) -> HashMap<M, PosNormMesh>
 where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -90,7 +90,7 @@ fn estimate_surface<V, T, M>(
     extent: &Extent,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, HashMap<lat::Point, usize>)
 where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -138,7 +138,7 @@ const CUBE_EDGES: [(usize, usize); 12] = [
 // Third, take the average of all these points for all edges (for edges that have crossings).
 fn estimate_surface_point<V, T, M>(voxels: &V, point: &lat::Point) -> Option<([f32; 3], [f32; 3])>
 where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -225,7 +225,7 @@ fn make_all_quads<V, T, M>(
     positions: &[[f32; 3]],
 ) -> (Vec<usize>, Vec<M>)
 where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -291,7 +291,7 @@ fn maybe_make_quad<V, T, M>(
     indices: &mut Vec<usize>,
     materials: &mut Vec<M>,
 ) where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -355,7 +355,7 @@ enum FaceResult {
 // Determine if the sign of the SDF flips between p1 and p2
 fn is_face<V, T, M>(voxels: &V, p1: &lat::Point, p2: &lat::Point) -> FaceResult
 where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {

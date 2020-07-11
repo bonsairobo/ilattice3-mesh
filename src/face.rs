@@ -17,7 +17,7 @@ impl Face {
 
     pub fn is_visible<V, T>(&self, voxels: &V, extent: &Extent) -> bool
     where
-        V: GetWorldRef<T>,
+        V: GetWorldRef<Data = T>,
         T: IsEmpty,
     {
         let adj_p = self.adjacent_point();

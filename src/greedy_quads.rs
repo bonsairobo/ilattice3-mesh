@@ -27,7 +27,7 @@ pub trait GreedyQuadsVoxel<M>: Clone + IsEmpty + PartialEq + Send + Sync {
 /// https://0fps.net/2012/06/30/meshing-in-a-minecraft-game/
 pub fn greedy_quads<V, T, M>(voxels: &V, extent: Extent) -> HashMap<M, PosNormTangTexMesh>
 where
-    V: GetWorldRef<T> + Send + Sync,
+    V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
     M: Clone + Eq + Hash + Send + Sync,
 {
@@ -71,7 +71,7 @@ fn grow_quad_extent(
 /// Greedily find visible quads (of the same type) in the plane.
 fn boundary_quads_in_plane<V, T, M>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
 where
-    V: GetWorldRef<T>,
+    V: GetWorldRef<Data = T>,
     T: GreedyQuadsVoxel<M>,
     M: Eq + Hash,
 {
@@ -122,7 +122,7 @@ fn boundary_quads_unidirectional<V, T, M>(
     normal: Normal,
 ) -> Vec<(Quad, M)>
 where
-    V: GetWorldRef<T> + Send + Sync,
+    V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
     M: Eq + Hash + Send + Sync,
 {
@@ -185,7 +185,7 @@ where
 /// not unique and is not guaranteed to be optimal.
 fn boundary_quads<V, T, M>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
 where
-    V: GetWorldRef<T> + Send + Sync,
+    V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
     M: Eq + Hash + Send + Sync,
 {
