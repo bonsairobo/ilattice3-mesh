@@ -61,7 +61,7 @@ where
 fn estimate_surface<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, HashMap<lat::Point, usize>)
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<usize>)
 where
     V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
@@ -76,15 +76,15 @@ where
 
     let mut positions = Vec::new();
     let mut normals = Vec::new();
-    let mut voxel_to_index = HashMap::new();
+    let mut voxel_to_index = vec![0; extent.volume()];
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
-        let p_index = I::index_from_local_point(s, &p);
+        let p_linear = I::index_from_local_point(s, &p);
         let mut corner_indices = [0; 8];
         for i in 0..8 {
-            corner_indices[i] = p_index + corner_offsets[i];
+            corner_indices[i] = p_linear + corner_offsets[i];
         }
         if let Some((surface_point, normal)) = estimate_surface_point(voxels, &corner_indices, &p) {
-            voxel_to_index.insert(p, positions.len());
+            voxel_to_index[p_linear] = positions.len();
             positions.push(surface_point);
             normals.push(normal);
         }
@@ -219,7 +219,7 @@ fn estimate_surface_edge_intersection(
 fn make_all_quads<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
-    voxel_to_index: &HashMap<lat::Point, usize>,
+    voxel_to_index: &[usize],
     positions: &[[f32; 3]],
 ) -> HashMap<M, Vec<usize>>
 where
@@ -242,11 +242,10 @@ where
                 voxels,
                 voxel_to_index,
                 positions,
-                &p,
                 p_linear,
                 p_linear + x_stride,
-                &[0, 1, 0].into(),
-                &[0, 0, 1].into(),
+                y_stride,
+                z_stride,
                 &mut material_indices,
             );
         }
@@ -256,11 +255,10 @@ where
                 voxels,
                 voxel_to_index,
                 positions,
-                &p,
                 p_linear,
                 p_linear + y_stride,
-                &[0, 0, 1].into(),
-                &[1, 0, 0].into(),
+                z_stride,
+                x_stride,
                 &mut material_indices,
             );
         }
@@ -270,11 +268,10 @@ where
                 voxels,
                 voxel_to_index,
                 positions,
-                &p,
                 p_linear,
                 p_linear + z_stride,
-                &[1, 0, 0].into(),
-                &[0, 1, 0].into(),
+                x_stride,
+                y_stride,
                 &mut material_indices,
             );
         }
@@ -285,13 +282,12 @@ where
 
 fn maybe_make_quad<V, T, M>(
     voxels: &V,
-    voxel_to_index: &HashMap<lat::Point, usize>,
+    voxel_to_index: &[usize],
     positions: &[[f32; 3]],
-    p: &lat::Point,
     i1: usize,
     i2: usize,
-    axis1: &lat::Point,
-    axis2: &lat::Point,
+    axis1_stride: usize,
+    axis2_stride: usize,
     material_indices: &mut HashMap<M, Vec<usize>>,
 ) where
     V: GetLinearRef<Data = T>,
@@ -307,10 +303,10 @@ fn maybe_make_quad<V, T, M>(
     // The triangle points, viewed face-front, look like this:
     // v1 v3
     // v2 v4
-    let v1 = *voxel_to_index.get(p).unwrap();
-    let v2 = *voxel_to_index.get(&(*p - *axis1)).unwrap();
-    let v3 = *voxel_to_index.get(&(*p - *axis2)).unwrap();
-    let v4 = *voxel_to_index.get(&(*p - *axis1 - *axis2)).unwrap();
+    let v1 = voxel_to_index[i1];
+    let v2 = voxel_to_index[i1 - axis1_stride];
+    let v3 = voxel_to_index[i1 - axis2_stride];
+    let v4 = voxel_to_index[i1 - axis1_stride - axis2_stride];
     let (pos1, pos2, pos3, pos4) = (positions[v1], positions[v2], positions[v3], positions[v4]);
     // Split the quad along the shorter axis, rather than the longer one.
     let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
