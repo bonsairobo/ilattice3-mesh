@@ -1,7 +1,7 @@
 // Adapted from the surface-nets crate by khyperia.
 
 use ilattice3 as lat;
-use ilattice3::{prelude::*, Extent};
+use ilattice3::{prelude::*, Extent, HasIndexer, Indexer};
 use std::{collections::HashMap, hash::Hash};
 
 pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
@@ -16,90 +16,75 @@ pub struct PosNormMesh {
     pub indices: Vec<usize>,
 }
 
-impl PosNormMesh {
-    fn copy_triangle(&mut self, tri: usize, other: &Self, reindex: &mut [Option<usize>]) {
-        let tri_start = 3 * tri;
-        let tri_end = tri_start + 3;
-        for i in tri_start..tri_end {
-            let other_index = other.indices[i];
-            let self_index = *reindex[other_index].get_or_insert_with(|| {
-                let new_index = self.positions.len();
-                self.positions.push(other.positions[other_index]);
-                self.normals.push(other.normals[other_index]);
-
-                new_index
-            });
-            self.indices.push(self_index);
-        }
-    }
-}
-
 /// Returns the map from material ID to (positions, normals, indices) for the isosurface.
-pub fn surface_nets<V, T, M>(voxels: &V, extent: &Extent) -> HashMap<M, PosNormMesh>
+pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> Vec<(M, PosNormMesh)>
 where
-    V: GetWorldRef<Data = T>,
+    // It saves quite a bit of time to do linear indexing.
+    V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
+    I: Indexer,
     M: Copy + Eq + Hash,
 {
+    let local_extent = extent.with_minimum([0, 0, 0].into());
+
     // Find all vertex positions. Addtionally, create a hashmap from grid position to vertex index.
-    let (positions, normals, voxel_to_index) = estimate_surface(voxels, extent);
+    let (mut positions, normals, voxel_to_index) = estimate_surface(voxels, &local_extent);
+    let min: [f32; 3] = extent.get_minimum().into();
+    for p in positions.iter_mut() {
+        p[0] += min[0];
+        p[1] += min[1];
+        p[2] += min[2];
+    }
 
     // Find all triangles (2 per quad), in the form of [index, index, index] triples.
-    let (indices, quad_materials) = make_all_quads(voxels, extent, &voxel_to_index, &positions);
+    let material_indices = make_all_quads(voxels, &local_extent, &voxel_to_index, &positions);
 
-    // Assign each triangle a material.
-    split_mesh_by_material(
-        &quad_materials,
-        &PosNormMesh {
-            positions,
-            normals,
-            indices,
-        },
-    )
+    // Just use the same vertices for each mesh. Not memory efficient, but significantly faster than
+    // trying to split the mesh.
+    let meshes: Vec<(M, PosNormMesh)> = material_indices
+        .into_iter()
+        .map(|(material, indices)| {
+            (
+                material,
+                PosNormMesh {
+                    positions: positions.clone(),
+                    normals: normals.clone(),
+                    indices,
+                },
+            )
+        })
+        .collect();
+
+    meshes
 }
 
-/// For each triangle, choose a material and copy the triangle into a new mesh.
-fn split_mesh_by_material<M>(
-    quad_materials: &[M],
-    orig_mesh: &PosNormMesh,
-) -> HashMap<M, PosNormMesh>
-where
-    M: Copy + Eq + Hash,
-{
-    // There's probably a more efficient way to do this, but the code is simple.
-    let mut material_to_mesh = HashMap::new();
-    let mut material_to_reindex = HashMap::new();
-    let num_triangles = orig_mesh.indices.len() / 3;
-    for i in 0..num_triangles {
-        let material = quad_materials[i / 2];
-        // Copy the triangle to the mesh for this material.
-        let mesh = material_to_mesh
-            .entry(material)
-            .or_insert_with(PosNormMesh::default);
-        let reindex = material_to_reindex
-            .entry(material)
-            .or_insert(vec![None; orig_mesh.positions.len()]);
-        mesh.copy_triangle(i, &orig_mesh, reindex);
-    }
-
-    material_to_mesh
-}
-
-fn estimate_surface<V, T, M>(
+fn estimate_surface<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, HashMap<lat::Point, usize>)
 where
-    V: GetWorldRef<Data = T>,
+    V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
+    I: Indexer,
     M: Copy + Eq + Hash,
 {
+    let s = extent.get_local_supremum();
+    let mut corner_offsets = [0; 8];
+    for (i, p) in CUBE_CORNERS.iter().enumerate() {
+        corner_offsets[i] = I::index_from_local_point(s, p);
+    }
+
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut voxel_to_index = HashMap::new();
-    for point in extent.add_to_supremum(&[-1, -1, -1].into()) {
-        if let Some((surface_point, normal)) = estimate_surface_point(voxels, &point) {
-            voxel_to_index.insert(point, positions.len());
+    for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
+        let p_index = I::index_from_local_point(s, &p);
+        let mut corner_indices = [0; 8];
+        for i in 0..8 {
+            corner_indices[i] = p_index + corner_offsets[i];
+        }
+        if let Some((surface_point, normal)) = estimate_surface_point(voxels, &corner_indices, &p) {
+            voxel_to_index.insert(p, positions.len());
             positions.push(surface_point);
             normals.push(normal);
         }
@@ -124,6 +109,17 @@ const CUBE_EDGES: [(usize, usize); 12] = [
     (0b110, 0b111), // ((1, 1, 0), (1, 1, 1)),
 ];
 
+const CUBE_CORNERS: [lat::Point; 8] = [
+    lat::Point { x: 0, y: 0, z: 0 },
+    lat::Point { x: 1, y: 0, z: 0 },
+    lat::Point { x: 0, y: 1, z: 0 },
+    lat::Point { x: 1, y: 1, z: 0 },
+    lat::Point { x: 0, y: 0, z: 1 },
+    lat::Point { x: 1, y: 0, z: 1 },
+    lat::Point { x: 0, y: 1, z: 1 },
+    lat::Point { x: 1, y: 1, z: 1 },
+];
+
 // Find the vertex position for this grid: it will be somewhere within the cube with coordinates
 // [0,1]. Returns the (position, normal, material).
 //
@@ -136,18 +132,20 @@ const CUBE_EDGES: [(usize, usize); 12] = [
 // estimate_surface_edge_intersection).
 //
 // Third, take the average of all these points for all edges (for edges that have crossings).
-fn estimate_surface_point<V, T, M>(voxels: &V, point: &lat::Point) -> Option<([f32; 3], [f32; 3])>
+fn estimate_surface_point<V, T, M>(
+    voxels: &V,
+    corner_indices: &[usize],
+    point: &lat::Point,
+) -> Option<([f32; 3], [f32; 3])>
 where
-    V: GetWorldRef<Data = T>,
+    V: GetLinearRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     // Get the signed distance values at each corner of this cube.
     let mut dists = [0.0; 8];
     for (i, dist) in dists.iter_mut().enumerate() {
-        let cube_corner =
-            *point + lat::Point::new((i & 1) as i32, ((i >> 1) & 1) as i32, ((i >> 2) & 1) as i32);
-        *dist = voxels.get_world_ref(&cube_corner).distance();
+        *dist = voxels.get_linear_ref(corner_indices[i]).distance();
     }
 
     let edge_crossings = CUBE_EDGES.iter().filter_map(|&(offset1, offset2)| {
@@ -218,21 +216,26 @@ fn estimate_surface_edge_intersection(
 // touching that boundary. The "centers" are actually the vertex positions, found earlier. Also,
 // make sure the triangles are facing the right way. There's some hellish off-by-one conditions and
 // whatnot that make this code really gross.
-fn make_all_quads<V, T, M>(
+fn make_all_quads<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
     voxel_to_index: &HashMap<lat::Point, usize>,
     positions: &[[f32; 3]],
-) -> (Vec<usize>, Vec<M>)
+) -> HashMap<M, Vec<usize>>
 where
-    V: GetWorldRef<Data = T>,
+    V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
+    I: Indexer,
     M: Copy + Eq + Hash,
 {
-    let mut indices = Vec::new();
-    let mut quad_materials = Vec::new();
+    let mut material_indices = HashMap::new();
     let min = extent.get_minimum();
+    let s = extent.get_local_supremum();
+    let x_stride = I::index_from_local_point(s, &[1, 0, 0].into());
+    let y_stride = I::index_from_local_point(s, &[0, 1, 0].into());
+    let z_stride = I::index_from_local_point(s, &[0, 0, 1].into());
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
+        let p_linear = I::index_from_local_point(s, &p);
         // Do edges parallel with the X axis
         if p.y != min.y && p.z != min.z {
             maybe_make_quad(
@@ -240,11 +243,11 @@ where
                 voxel_to_index,
                 positions,
                 &p,
-                &[1, 0, 0].into(),
+                p_linear,
+                p_linear + x_stride,
                 &[0, 1, 0].into(),
                 &[0, 0, 1].into(),
-                &mut indices,
-                &mut quad_materials,
+                &mut material_indices,
             );
         }
         // Do edges parallel with the Y axis
@@ -254,11 +257,11 @@ where
                 voxel_to_index,
                 positions,
                 &p,
-                &[0, 1, 0].into(),
+                p_linear,
+                p_linear + y_stride,
                 &[0, 0, 1].into(),
                 &[1, 0, 0].into(),
-                &mut indices,
-                &mut quad_materials,
+                &mut material_indices,
             );
         }
         // Do edges parallel with the Z axis
@@ -268,35 +271,34 @@ where
                 voxel_to_index,
                 positions,
                 &p,
-                &[0, 0, 1].into(),
+                p_linear,
+                p_linear + z_stride,
                 &[1, 0, 0].into(),
                 &[0, 1, 0].into(),
-                &mut indices,
-                &mut quad_materials,
+                &mut material_indices,
             );
         }
     }
 
-    (indices, quad_materials)
+    material_indices
 }
 
 fn maybe_make_quad<V, T, M>(
     voxels: &V,
     voxel_to_index: &HashMap<lat::Point, usize>,
     positions: &[[f32; 3]],
-    p1: &lat::Point,
-    offset: &lat::Point,
+    p: &lat::Point,
+    i1: usize,
+    i2: usize,
     axis1: &lat::Point,
     axis2: &lat::Point,
-    indices: &mut Vec<usize>,
-    materials: &mut Vec<M>,
+    material_indices: &mut HashMap<M, Vec<usize>>,
 ) where
-    V: GetWorldRef<Data = T>,
+    V: GetLinearRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
-    let p2 = *p1 + *offset;
-    let face_result = is_face(voxels, p1, &p2);
+    let face_result = is_face(voxels, i1, i2);
 
     if let FaceResult::NoFace = face_result {
         return;
@@ -305,10 +307,10 @@ fn maybe_make_quad<V, T, M>(
     // The triangle points, viewed face-front, look like this:
     // v1 v3
     // v2 v4
-    let v1 = *voxel_to_index.get(p1).unwrap();
-    let v2 = *voxel_to_index.get(&(*p1 - *axis1)).unwrap();
-    let v3 = *voxel_to_index.get(&(*p1 - *axis2)).unwrap();
-    let v4 = *voxel_to_index.get(&(*p1 - *axis1 - *axis2)).unwrap();
+    let v1 = *voxel_to_index.get(p).unwrap();
+    let v2 = *voxel_to_index.get(&(*p - *axis1)).unwrap();
+    let v3 = *voxel_to_index.get(&(*p - *axis2)).unwrap();
+    let v4 = *voxel_to_index.get(&(*p - *axis1 - *axis2)).unwrap();
     let (pos1, pos2, pos3, pos4) = (positions[v1], positions[v2], positions[v3], positions[v4]);
     // Split the quad along the shorter axis, rather than the longer one.
     let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
@@ -316,11 +318,11 @@ fn maybe_make_quad<V, T, M>(
             FaceResult::NoFace => unreachable!(),
             FaceResult::FacePositive => (
                 [v1, v2, v4, v1, v4, v3],
-                voxels.get_world_ref(&p1).material(),
+                voxels.get_linear_ref(i1).material(),
             ),
             FaceResult::FaceNegative => (
                 [v1, v4, v2, v1, v3, v4],
-                voxels.get_world_ref(&p2).material(),
+                voxels.get_linear_ref(i2).material(),
             ),
         }
     } else {
@@ -328,16 +330,16 @@ fn maybe_make_quad<V, T, M>(
             FaceResult::NoFace => unreachable!(),
             FaceResult::FacePositive => (
                 [v2, v4, v3, v2, v3, v1],
-                voxels.get_world_ref(&p1).material(),
+                voxels.get_linear_ref(i1).material(),
             ),
             FaceResult::FaceNegative => (
                 [v2, v3, v4, v2, v1, v3],
-                voxels.get_world_ref(&p2).material(),
+                voxels.get_linear_ref(i2).material(),
             ),
         }
     };
-    indices.extend(quad.iter());
-    materials.push(material);
+    let indices = material_indices.entry(material).or_insert_with(Vec::new);
+    indices.extend_from_slice(&quad);
 }
 
 fn sq_dist(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -353,18 +355,64 @@ enum FaceResult {
 }
 
 // Determine if the sign of the SDF flips between p1 and p2
-fn is_face<V, T, M>(voxels: &V, p1: &lat::Point, p2: &lat::Point) -> FaceResult
+fn is_face<V, T, M>(voxels: &V, i1: usize, i2: usize) -> FaceResult
 where
-    V: GetWorldRef<Data = T>,
+    V: GetLinearRef<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     match (
-        voxels.get_world_ref(p1).distance() < 0.0,
-        voxels.get_world_ref(p2).distance() < 0.0,
+        voxels.get_linear_ref(i1).distance() < 0.0,
+        voxels.get_linear_ref(i2).distance() < 0.0,
     ) {
         (true, false) => FaceResult::FacePositive,
         (false, true) => FaceResult::FaceNegative,
         _ => FaceResult::NoFace,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use ilattice3::{FnLatticeMap, VecLatticeMap, YLevelsIndexer};
+    use std::io::Write;
+
+    #[derive(Clone)]
+    struct Voxel(f32);
+
+    impl SurfaceNetsVoxel<u8> for Voxel {
+        fn material(&self) -> u8 {
+            1
+        }
+
+        fn distance(&self) -> f32 {
+            self.0
+        }
+    }
+
+    fn waves_sdf(p: &Point) -> Voxel {
+        let n = 2.0;
+        let val = ((p.x as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin()
+            + ((p.y as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin()
+            + ((p.z as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin();
+
+        Voxel(val)
+    }
+
+    #[test]
+    fn benchmark() {
+        let sample_extent = Extent::from_center_and_radius([0, 0, 0].into(), 32);
+        let samples = VecLatticeMap::<_, YLevelsIndexer>::copy_from_map(
+            &FnLatticeMap::new(waves_sdf),
+            &sample_extent,
+        );
+
+        let start = std::time::Instant::now();
+        let _mesh = surface_nets(&samples, samples.get_extent());
+        let elapsed_micros = start.elapsed().as_micros();
+        std::io::stdout()
+            .write(format!("surface_nets took {} micros\n", elapsed_micros).as_bytes())
+            .unwrap();
     }
 }
