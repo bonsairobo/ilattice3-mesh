@@ -144,8 +144,17 @@ where
 {
     // Get the signed distance values at each corner of this cube.
     let mut dists = [0.0; 8];
+    let mut num_negative = 0;
     for (i, dist) in dists.iter_mut().enumerate() {
-        *dist = voxels.get_linear_ref(corner_indices[i]).distance();
+        let d = voxels.get_linear_ref(corner_indices[i]).distance();
+        *dist = d;
+        if d < 0.0 {
+            num_negative += 1;
+        }
+    }
+
+    if num_negative == 0 || num_negative == 8 {
+        return None;
     }
 
     let edge_crossings = CUBE_EDGES.iter().filter_map(|&(offset1, offset2)| {
@@ -161,31 +170,27 @@ where
         sum[2] += position[2];
     }
 
-    if count == 0 {
-        None
-    } else {
-        // Calculate the normal as the gradient of the distance field.
-        let normal_x = (dists[0b001] + dists[0b011] + dists[0b101] + dists[0b111])
-            - (dists[0b000] + dists[0b010] + dists[0b100] + dists[0b110]);
-        let normal_y = (dists[0b010] + dists[0b011] + dists[0b110] + dists[0b111])
-            - (dists[0b000] + dists[0b001] + dists[0b100] + dists[0b101]);
-        let normal_z = (dists[0b100] + dists[0b101] + dists[0b110] + dists[0b111])
-            - (dists[0b000] + dists[0b001] + dists[0b010] + dists[0b011]);
-        let normal_len = (normal_x * normal_x + normal_y * normal_y + normal_z * normal_z).sqrt();
+    // Calculate the normal as the gradient of the distance field.
+    let normal_x = (dists[0b001] + dists[0b011] + dists[0b101] + dists[0b111])
+        - (dists[0b000] + dists[0b010] + dists[0b100] + dists[0b110]);
+    let normal_y = (dists[0b010] + dists[0b011] + dists[0b110] + dists[0b111])
+        - (dists[0b000] + dists[0b001] + dists[0b100] + dists[0b101]);
+    let normal_z = (dists[0b100] + dists[0b101] + dists[0b110] + dists[0b111])
+        - (dists[0b000] + dists[0b001] + dists[0b010] + dists[0b011]);
+    let normal_len = (normal_x * normal_x + normal_y * normal_y + normal_z * normal_z).sqrt();
 
-        Some((
-            [
-                sum[0] / count as f32 + point.x as f32 + 0.5,
-                sum[1] / count as f32 + point.y as f32 + 0.5,
-                sum[2] / count as f32 + point.z as f32 + 0.5,
-            ],
-            [
-                normal_x / normal_len,
-                normal_y / normal_len,
-                normal_z / normal_len,
-            ],
-        ))
-    }
+    Some((
+        [
+            sum[0] / count as f32 + point.x as f32 + 0.5,
+            sum[1] / count as f32 + point.y as f32 + 0.5,
+            sum[2] / count as f32 + point.z as f32 + 0.5,
+        ],
+        [
+            normal_x / normal_len,
+            normal_y / normal_len,
+            normal_z / normal_len,
+        ],
+    ))
 }
 
 // Given two points, A and B, find the point between them where the SDF is zero.
@@ -202,11 +207,12 @@ fn estimate_surface_edge_intersection(
         return None;
     }
 
-    let interp = value1 / (value1 - value2);
+    let interp1 = value1 / (value1 - value2);
+    let interp2 = 1.0 - interp1;
     let position = [
-        (offset1 & 1) as f32 * (1.0 - interp) + (offset2 & 1) as f32 * interp,
-        ((offset1 >> 1) & 1) as f32 * (1.0 - interp) + ((offset2 >> 1) & 1) as f32 * interp,
-        ((offset1 >> 2) & 1) as f32 * (1.0 - interp) + ((offset2 >> 2) & 1) as f32 * interp,
+        (offset1 & 1) as f32 * interp2 + (offset2 & 1) as f32 * interp1,
+        ((offset1 >> 1) & 1) as f32 * interp2 + ((offset2 >> 1) & 1) as f32 * interp1,
+        ((offset1 >> 2) & 1) as f32 * interp2 + ((offset2 >> 2) & 1) as f32 * interp1,
     ];
 
     Some(position)
@@ -388,7 +394,7 @@ mod test {
     }
 
     fn waves_sdf(p: &Point) -> Voxel {
-        let n = 2.0;
+        let n = 10.0;
         let val = ((p.x as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin()
             + ((p.y as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin()
             + ((p.z as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin();
