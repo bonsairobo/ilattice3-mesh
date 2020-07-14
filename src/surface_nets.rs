@@ -20,7 +20,7 @@ pub struct PosNormMesh {
 pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> Vec<(M, PosNormMesh)>
 where
     // It saves quite a bit of time to do linear indexing.
-    V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
+    V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
     I: Indexer,
     M: Copy + Eq + Hash,
@@ -63,7 +63,7 @@ fn estimate_surface<V, T, I, M>(
     extent: &Extent,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<usize>)
 where
-    V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
+    V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
     I: Indexer,
     M: Copy + Eq + Hash,
@@ -138,7 +138,7 @@ fn estimate_surface_point<V, T, M>(
     point: &lat::Point,
 ) -> Option<([f32; 3], [f32; 3])>
 where
-    V: GetLinearRef<Data = T>,
+    V: GetLinear<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -146,7 +146,7 @@ where
     let mut dists = [0.0; 8];
     let mut num_negative = 0;
     for (i, dist) in dists.iter_mut().enumerate() {
-        let d = voxels.get_linear_ref(corner_indices[i]).distance();
+        let d = voxels.get_linear(corner_indices[i]).distance();
         *dist = d;
         if d < 0.0 {
             num_negative += 1;
@@ -229,7 +229,7 @@ fn make_all_quads<V, T, I, M>(
     positions: &[[f32; 3]],
 ) -> HashMap<M, Vec<usize>>
 where
-    V: GetLinearRef<Data = T> + HasIndexer<Indexer = I>,
+    V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
     I: Indexer,
     M: Copy + Eq + Hash,
@@ -296,7 +296,7 @@ fn maybe_make_quad<V, T, M>(
     axis2_stride: usize,
     material_indices: &mut HashMap<M, Vec<usize>>,
 ) where
-    V: GetLinearRef<Data = T>,
+    V: GetLinear<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
@@ -318,26 +318,22 @@ fn maybe_make_quad<V, T, M>(
     let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => (
-                [v1, v2, v4, v1, v4, v3],
-                voxels.get_linear_ref(i1).material(),
-            ),
-            FaceResult::FaceNegative => (
-                [v1, v4, v2, v1, v3, v4],
-                voxels.get_linear_ref(i2).material(),
-            ),
+            FaceResult::FacePositive => {
+                ([v1, v2, v4, v1, v4, v3], voxels.get_linear(i1).material())
+            }
+            FaceResult::FaceNegative => {
+                ([v1, v4, v2, v1, v3, v4], voxels.get_linear(i2).material())
+            }
         }
     } else {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => (
-                [v2, v4, v3, v2, v3, v1],
-                voxels.get_linear_ref(i1).material(),
-            ),
-            FaceResult::FaceNegative => (
-                [v2, v3, v4, v2, v1, v3],
-                voxels.get_linear_ref(i2).material(),
-            ),
+            FaceResult::FacePositive => {
+                ([v2, v4, v3, v2, v3, v1], voxels.get_linear(i1).material())
+            }
+            FaceResult::FaceNegative => {
+                ([v2, v3, v4, v2, v1, v3], voxels.get_linear(i2).material())
+            }
         }
     };
     let indices = material_indices.entry(material).or_insert_with(Vec::new);
@@ -359,13 +355,13 @@ enum FaceResult {
 // Determine if the sign of the SDF flips between p1 and p2
 fn is_face<V, T, M>(voxels: &V, i1: usize, i2: usize) -> FaceResult
 where
-    V: GetLinearRef<Data = T>,
+    V: GetLinear<Data = T>,
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
     match (
-        voxels.get_linear_ref(i1).distance() < 0.0,
-        voxels.get_linear_ref(i2).distance() < 0.0,
+        voxels.get_linear(i1).distance() < 0.0,
+        voxels.get_linear(i2).distance() < 0.0,
     ) {
         (true, false) => FaceResult::FacePositive,
         (false, true) => FaceResult::FaceNegative,
