@@ -16,8 +16,17 @@ pub struct PosNormMesh {
     pub indices: Vec<usize>,
 }
 
+pub struct SurfaceNetsOutput<M> {
+    /// The isosurface points.
+    pub positions: Vec<[f32; 3]>,
+    /// The isosurface normals.
+    pub normals: Vec<[f32; 3]>,
+    /// The triangles belonging to each material.
+    pub indices_by_material: HashMap<M, Vec<usize>>,
+}
+
 /// Returns the map from material ID to (positions, normals, indices) for the isosurface.
-pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> Vec<(M, PosNormMesh)>
+pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput<M>
 where
     // It saves quite a bit of time to do linear indexing.
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
@@ -37,25 +46,13 @@ where
     }
 
     // Find all triangles (2 per quad), in the form of [index, index, index] triples.
-    let material_indices = make_all_quads(voxels, &local_extent, &voxel_to_index, &positions);
+    let indices_by_material = make_all_quads(voxels, &local_extent, &voxel_to_index, &positions);
 
-    // Just use the same vertices for each mesh. Not memory efficient, but significantly faster than
-    // trying to split the mesh.
-    let meshes: Vec<(M, PosNormMesh)> = material_indices
-        .into_iter()
-        .map(|(material, indices)| {
-            (
-                material,
-                PosNormMesh {
-                    positions: positions.clone(),
-                    normals: normals.clone(),
-                    indices,
-                },
-            )
-        })
-        .collect();
-
-    meshes
+    SurfaceNetsOutput {
+        positions,
+        normals,
+        indices_by_material,
+    }
 }
 
 fn estimate_surface<V, T, I, M>(
@@ -68,17 +65,18 @@ where
     I: Indexer,
     M: Copy + Eq + Hash,
 {
-    let s = extent.get_local_supremum();
+    // Precalculate these offsets to do faster linear indexing.
+    let sup = extent.get_local_supremum();
     let mut corner_offsets = [0; 8];
     for (i, p) in CUBE_CORNERS.iter().enumerate() {
-        corner_offsets[i] = I::index_from_local_point(s, p);
+        corner_offsets[i] = I::index_from_local_point(sup, p);
     }
 
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut voxel_to_index = vec![0; extent.volume()];
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
-        let p_linear = I::index_from_local_point(s, &p);
+        let p_linear = I::index_from_local_point(sup, &p);
         let mut corner_indices = [0; 8];
         for i in 0..8 {
             corner_indices[i] = p_linear + corner_offsets[i];
@@ -407,7 +405,7 @@ mod test {
         );
 
         let start = std::time::Instant::now();
-        let _mesh = surface_nets(&samples, samples.get_extent());
+        let _output = surface_nets(&samples, samples.get_extent());
         let elapsed_micros = start.elapsed().as_micros();
         std::io::stdout()
             .write(format!("surface_nets took {} micros\n", elapsed_micros).as_bytes())
