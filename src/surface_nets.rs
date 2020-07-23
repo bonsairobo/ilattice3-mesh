@@ -298,7 +298,10 @@ fn maybe_make_quad<V, T, M>(
     T: SurfaceNetsVoxel<M>,
     M: Copy + Eq + Hash,
 {
-    let face_result = is_face(voxels, i1, i2);
+    let voxel1 = voxels.get_linear(i1);
+    let voxel2 = voxels.get_linear(i2);
+
+    let face_result = is_face(voxel1.distance(), voxel2.distance());
 
     if let FaceResult::NoFace = face_result {
         return;
@@ -316,22 +319,14 @@ fn maybe_make_quad<V, T, M>(
     let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => {
-                ([v1, v2, v4, v1, v4, v3], voxels.get_linear(i1).material())
-            }
-            FaceResult::FaceNegative => {
-                ([v1, v4, v2, v1, v3, v4], voxels.get_linear(i2).material())
-            }
+            FaceResult::FacePositive => ([v1, v2, v4, v1, v4, v3], voxel1.material()),
+            FaceResult::FaceNegative => ([v1, v4, v2, v1, v3, v4], voxel2.material()),
         }
     } else {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => {
-                ([v2, v4, v3, v2, v3, v1], voxels.get_linear(i1).material())
-            }
-            FaceResult::FaceNegative => {
-                ([v2, v3, v4, v2, v1, v3], voxels.get_linear(i2).material())
-            }
+            FaceResult::FacePositive => ([v2, v4, v3, v2, v3, v1], voxel1.material()),
+            FaceResult::FaceNegative => ([v2, v3, v4, v2, v1, v3], voxel2.material()),
         }
     };
     let indices = material_indices.entry(material).or_insert_with(Vec::new);
@@ -351,16 +346,8 @@ enum FaceResult {
 }
 
 // Determine if the sign of the SDF flips between p1 and p2
-fn is_face<V, T, M>(voxels: &V, i1: usize, i2: usize) -> FaceResult
-where
-    V: GetLinear<Data = T>,
-    T: SurfaceNetsVoxel<M>,
-    M: Copy + Eq + Hash,
-{
-    match (
-        voxels.get_linear(i1).distance() < 0.0,
-        voxels.get_linear(i2).distance() < 0.0,
-    ) {
+fn is_face(d1: f32, d2: f32) -> FaceResult {
+    match (d1 < 0.0, d2 < 0.0) {
         (true, false) => FaceResult::FacePositive,
         (false, true) => FaceResult::FaceNegative,
         _ => FaceResult::NoFace,
