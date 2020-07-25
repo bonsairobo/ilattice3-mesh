@@ -9,13 +9,6 @@ pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
     fn material(&self) -> M;
 }
 
-#[derive(Default)]
-pub struct PosNormMesh {
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub indices: Vec<usize>,
-}
-
 pub struct SurfaceNetsOutput<M> {
     /// The isosurface points.
     pub positions: Vec<[f32; 3]>,
