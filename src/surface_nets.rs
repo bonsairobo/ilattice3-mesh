@@ -1,7 +1,7 @@
 // Adapted from the surface-nets crate by khyperia.
 
 use ilattice3 as lat;
-use ilattice3::{prelude::*, Extent, HasIndexer, Indexer};
+use ilattice3::{prelude::*, Extent, HasIndexer, Indexer, CUBE_CORNERS};
 use std::{collections::HashMap, hash::Hash};
 
 pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
@@ -10,7 +10,8 @@ pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
 }
 
 pub struct SurfaceNetsOutput<M> {
-    /// Coordinates of every voxel that intersects the isosurface.
+    /// Coordinates of every voxel that intersects the isosurface. In padded-chunk-local
+    /// coordinates.
     pub surface_points: Vec<Point>,
     /// The isosurface points. Parallel to `surface_points`.
     pub positions: Vec<[f32; 3]>,
@@ -116,17 +117,6 @@ const CUBE_EDGES: [(usize, usize); 12] = [
     (0b100, 0b110),
     (0b101, 0b111),
     (0b110, 0b111),
-];
-
-const CUBE_CORNERS: [lat::Point; 8] = [
-    lat::Point { x: 0, y: 0, z: 0 },
-    lat::Point { x: 1, y: 0, z: 0 },
-    lat::Point { x: 0, y: 1, z: 0 },
-    lat::Point { x: 1, y: 1, z: 0 },
-    lat::Point { x: 0, y: 0, z: 1 },
-    lat::Point { x: 1, y: 0, z: 1 },
-    lat::Point { x: 0, y: 1, z: 1 },
-    lat::Point { x: 1, y: 1, z: 1 },
 ];
 
 // Consider the grid-aligned cube where `point` is the minimal corner. Find a point inside this cube
