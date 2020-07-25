@@ -208,9 +208,9 @@ fn estimate_surface_edge_intersection(
 }
 
 // For every edge that crosses the isosurface, make a quad between the "centers" of the four cubes
-// touching that surface. The "centers" are actually the vertex positions, found earlier. Also,
-// make sure the triangles are facing the right way. There's some hellish off-by-one conditions and
-// whatnot that make this code really gross.
+// touching that surface. The "centers" are actually the vertex positions found earlier. Also,
+// make sure the triangles are facing the right way. See the comments on `maybe_make_quad` to help
+// with understanding the indexing.
 fn make_all_quads<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
@@ -230,10 +230,17 @@ where
     let x_stride = I::index_from_local_point(sup, &[1, 0, 0].into());
     let y_stride = I::index_from_local_point(sup, &[0, 1, 0].into());
     let z_stride = I::index_from_local_point(sup, &[0, 0, 1].into());
-    for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
+
+    // BIG NOTE: The checks against iter_max prevent us from making quads on the 3 maximal planes of
+    // the grid. This is necessary to avoid redundant quads when meshing adjacent chunks (assuming
+    // this will be used on a chunked voxel grid).
+
+    let iter_extent = extent.add_to_supremum(&[-1, -1, -1].into());
+    let iter_max = iter_extent.get_local_max();
+    for p in iter_extent {
         let p_linear = I::index_from_local_point(sup, &p);
         // Do edges parallel with the X axis
-        if p.y != min.y && p.z != min.z {
+        if p.y != min.y && p.z != min.z && p.x != iter_max.x {
             maybe_make_quad(
                 voxels,
                 voxel_to_index,
@@ -246,7 +253,7 @@ where
             );
         }
         // Do edges parallel with the Y axis
-        if p.x != min.x && p.z != min.z {
+        if p.x != min.x && p.z != min.z && p.y != iter_max.y {
             maybe_make_quad(
                 voxels,
                 voxel_to_index,
@@ -259,7 +266,7 @@ where
             );
         }
         // Do edges parallel with the Z axis
-        if p.x != min.x && p.y != min.y {
+        if p.x != min.x && p.y != min.y && p.z != iter_max.z {
             maybe_make_quad(
                 voxels,
                 voxel_to_index,
