@@ -18,7 +18,9 @@ pub struct SurfaceNetsOutput<M> {
     pub indices_by_material: HashMap<M, Vec<usize>>,
 }
 
-/// Returns the map from material ID to (positions, normals, indices) for the isosurface.
+/// Returns a mesh for the isosurface. Assumes `extent` is a padded voxel chunk, so the returned
+/// mesh will be compatible with meshes of adjacent chunks. If a voxel within 2 units of a chunk
+/// boundary changes, then all chunks adjacent to that boundary need to be re-meshed.
 pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput<M>
 where
     // It saves quite a bit of time to do linear indexing.
@@ -29,8 +31,9 @@ where
 {
     let local_extent = extent.with_minimum([0, 0, 0].into());
 
-    // Find all vertex positions. Addtionally, create a hashmap from grid position to vertex index.
     let (mut positions, normals, voxel_to_index) = estimate_surface(voxels, &local_extent);
+
+    // Positions were generated in local coordinates, so translate them back to world coordinates.
     let min: [f32; 3] = extent.get_minimum().into();
     for p in positions.iter_mut() {
         p[0] += min[0];
@@ -38,7 +41,6 @@ where
         p[2] += min[2];
     }
 
-    // Find all triangles (2 per quad), in the form of [index, index, index] triples.
     let indices_by_material = make_all_quads(voxels, &local_extent, &voxel_to_index, &positions);
 
     SurfaceNetsOutput {
@@ -48,6 +50,8 @@ where
     }
 }
 
+// Find all vertex positions and normals. Also generate a map from grid position to vertex index
+// to be used to look up vertices when generating quads.
 fn estimate_surface<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
@@ -69,11 +73,13 @@ where
     let mut normals = Vec::new();
     let mut voxel_to_index = vec![0; extent.volume()];
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
+        // Get the corners of the cube "at" point p.
         let p_linear = I::index_from_local_point(sup, &p);
         let mut corner_indices = [0; 8];
         for i in 0..8 {
             corner_indices[i] = p_linear + corner_offsets[i];
         }
+
         if let Some((surface_point, normal)) = estimate_surface_point(voxels, &corner_indices, &p) {
             voxel_to_index[p_linear] = positions.len();
             positions.push(surface_point);
@@ -84,20 +90,19 @@ where
     (positions, normals, voxel_to_index)
 }
 
-// List of all edges in a cube.
 const CUBE_EDGES: [(usize, usize); 12] = [
-    (0b000, 0b001), // ((0, 0, 0), (0, 0, 1)),
-    (0b000, 0b010), // ((0, 0, 0), (0, 1, 0)),
-    (0b000, 0b100), // ((0, 0, 0), (1, 0, 0)),
-    (0b001, 0b011), // ((0, 0, 1), (0, 1, 1)),
-    (0b001, 0b101), // ((0, 0, 1), (1, 0, 1)),
-    (0b010, 0b011), // ((0, 1, 0), (0, 1, 1)),
-    (0b010, 0b110), // ((0, 1, 0), (1, 1, 0)),
-    (0b011, 0b111), // ((0, 1, 1), (1, 1, 1)),
-    (0b100, 0b101), // ((1, 0, 0), (1, 0, 1)),
-    (0b100, 0b110), // ((1, 0, 0), (1, 1, 0)),
-    (0b101, 0b111), // ((1, 0, 1), (1, 1, 1)),
-    (0b110, 0b111), // ((1, 1, 0), (1, 1, 1)),
+    (0b000, 0b001),
+    (0b000, 0b010),
+    (0b000, 0b100),
+    (0b001, 0b011),
+    (0b001, 0b101),
+    (0b010, 0b011),
+    (0b010, 0b110),
+    (0b011, 0b111),
+    (0b100, 0b101),
+    (0b100, 0b110),
+    (0b101, 0b111),
+    (0b110, 0b111),
 ];
 
 const CUBE_CORNERS: [lat::Point; 8] = [
@@ -112,7 +117,7 @@ const CUBE_CORNERS: [lat::Point; 8] = [
 ];
 
 // Consider the grid-aligned cube where `point` is the minimal corner. Find a point inside this cube
-// that is close to the isosurface.
+// that is approximately on the isosurface.
 //
 // This is done by estimating, for each cube edge, where the isosurface crosses the edge (if it
 // does at all). Then the estimated surface point is the average of these edge crossings.
@@ -138,6 +143,7 @@ where
     }
 
     if num_negative == 0 || num_negative == 8 {
+        // No crossings.
         return None;
     }
 
@@ -177,7 +183,7 @@ where
     ))
 }
 
-// Given two points, A and B, find the point between them where the SDF is zero.
+// Given two cube corners, find the point between them where the SDF is zero.
 // (This might not exist).
 fn estimate_surface_edge_intersection(
     offset1: usize,
@@ -224,9 +230,9 @@ where
     let y_stride = I::index_from_local_point(sup, &[0, 1, 0].into());
     let z_stride = I::index_from_local_point(sup, &[0, 0, 1].into());
 
-    // BIG NOTE: The checks against iter_max prevent us from making quads on the 3 maximal planes of
-    // the grid. This is necessary to avoid redundant quads when meshing adjacent chunks (assuming
-    // this will be used on a chunked voxel grid).
+    // NOTE: The checks against iter_max prevent us from making quads on the 3 maximal planes of the
+    // grid. This is necessary to avoid redundant quads when meshing adjacent chunks (assuming this
+    // will be used on a chunked voxel grid).
 
     let iter_extent = extent.add_to_supremum(&[-1, -1, -1].into());
     let iter_max = iter_extent.get_local_max();
@@ -278,18 +284,18 @@ where
 
 // This is where the "dual" nature of surface nets comes into play.
 //
-// The surface point p was found somewhere inside of the grid cell "at" index i1.
+// The surface point s was found somewhere inside of the cube "at" index i1.
 //
 //       x ---- x
 //      /      /|
 //     x ---- x |
-//     |   p  | x
+//     |   s  | x
 //     |      |/
 //    i1 --- i2
 //
-// And now we want to find the quad between i1 and i2 where p is a corner of the quad.
+// And now we want to find the quad between i1 and i2 where s is a corner of the quad.
 //
-//          p
+//          s
 //         /|
 //        / |
 //       |  |
