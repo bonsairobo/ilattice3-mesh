@@ -118,18 +118,11 @@ const CUBE_CORNERS: [lat::Point; 8] = [
     lat::Point { x: 1, y: 1, z: 1 },
 ];
 
-// Find the vertex position for this grid: it will be somewhere within the cube with coordinates
-// [0,1]. Returns the (position, normal, material).
+// Consider the grid-aligned cube where `point` is the minimal corner. Find a point inside this cube
+// that is close to the isosurface.
 //
-// How?
-//
-// First, for each edge in the cube, find if that edge crosses the SDF boundary - i.e. one
-// point is positive, one point is negative.
-//
-// Second, calculate the "weighted midpoint" between these points (see
-// estimate_surface_edge_intersection).
-//
-// Third, take the average of all these points for all edges (for edges that have crossings).
+// This is done by estimating, for each cube edge, where the isosurface crosses the edge (if it
+// does at all). Then the estimated surface point is the average of these edge crossings.
 fn estimate_surface_point<V, T, M>(
     voxels: &V,
     corner_indices: &[usize],
@@ -193,8 +186,6 @@ where
 
 // Given two points, A and B, find the point between them where the SDF is zero.
 // (This might not exist).
-// A and B are specified via A=coord+offset1 and B=coord+offset2, because code
-// is weird.
 fn estimate_surface_edge_intersection(
     offset1: usize,
     offset2: usize,
@@ -216,8 +207,8 @@ fn estimate_surface_edge_intersection(
     Some(position)
 }
 
-// For every edge that crosses the boundary, make a quad between the "centers" of the four cubes
-// touching that boundary. The "centers" are actually the vertex positions, found earlier. Also,
+// For every edge that crosses the isosurface, make a quad between the "centers" of the four cubes
+// touching that surface. The "centers" are actually the vertex positions, found earlier. Also,
 // make sure the triangles are facing the right way. There's some hellish off-by-one conditions and
 // whatnot that make this code really gross.
 fn make_all_quads<V, T, I, M>(
@@ -234,12 +225,13 @@ where
 {
     let mut material_indices = HashMap::new();
     let min = extent.get_minimum();
-    let s = extent.get_local_supremum();
-    let x_stride = I::index_from_local_point(s, &[1, 0, 0].into());
-    let y_stride = I::index_from_local_point(s, &[0, 1, 0].into());
-    let z_stride = I::index_from_local_point(s, &[0, 0, 1].into());
+    debug_assert_eq!(min, [0, 0, 0].into());
+    let sup = extent.get_local_supremum();
+    let x_stride = I::index_from_local_point(sup, &[1, 0, 0].into());
+    let y_stride = I::index_from_local_point(sup, &[0, 1, 0].into());
+    let z_stride = I::index_from_local_point(sup, &[0, 0, 1].into());
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
-        let p_linear = I::index_from_local_point(s, &p);
+        let p_linear = I::index_from_local_point(sup, &p);
         // Do edges parallel with the X axis
         if p.y != min.y && p.z != min.z {
             maybe_make_quad(
@@ -284,14 +276,42 @@ where
     material_indices
 }
 
+// This is where the "dual" nature of surface nets comes into play.
+//
+// The surface point p was found somewhere inside of the grid cell "at" index i1.
+//
+//       x ---- x
+//      /      /|
+//     x ---- x |
+//     |   p  | x
+//     |      |/
+//    i1 --- i2
+//
+// And now we want to find the quad between i1 and i2 where p is a corner of the quad.
+//
+//          p
+//         /|
+//        / |
+//       |  |
+//   i1  |  |  i2
+//       | /
+//       |/
+//
+// If A is (of the three grid axes) the axis between i1 and i2,
+//
+//       A
+//   i1 ---> i2
+//
+// then we must find the other 3 quad corners by moving along the other two axes (those orthogonal
+// to A) in the negative directions; these are axis B and axis C.
 fn maybe_make_quad<V, T, M>(
     voxels: &V,
     voxel_to_index: &[usize],
     positions: &[[f32; 3]],
     i1: usize,
     i2: usize,
-    axis1_stride: usize,
-    axis2_stride: usize,
+    axis_b_stride: usize,
+    axis_c_stride: usize,
     material_indices: &mut HashMap<M, Vec<usize>>,
 ) where
     V: GetLinear<Data = T>,
@@ -311,9 +331,9 @@ fn maybe_make_quad<V, T, M>(
     // v1 v3
     // v2 v4
     let v1 = voxel_to_index[i1];
-    let v2 = voxel_to_index[i1 - axis1_stride];
-    let v3 = voxel_to_index[i1 - axis2_stride];
-    let v4 = voxel_to_index[i1 - axis1_stride - axis2_stride];
+    let v2 = voxel_to_index[i1 - axis_b_stride];
+    let v3 = voxel_to_index[i1 - axis_c_stride];
+    let v4 = voxel_to_index[i1 - axis_b_stride - axis_c_stride];
     let (pos1, pos2, pos3, pos4) = (positions[v1], positions[v2], positions[v3], positions[v4]);
     // Split the quad along the shorter axis, rather than the longer one.
     let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
