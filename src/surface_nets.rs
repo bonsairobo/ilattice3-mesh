@@ -240,9 +240,7 @@ where
     let min = extent.get_minimum();
     debug_assert_eq!(min, [0, 0, 0].into());
     let sup = extent.get_local_supremum();
-    let x_stride = I::index_from_local_point(sup, &[1, 0, 0].into());
-    let y_stride = I::index_from_local_point(sup, &[0, 1, 0].into());
-    let z_stride = I::index_from_local_point(sup, &[0, 0, 1].into());
+    let [x_stride, y_stride, z_stride] = I::get_strides(&sup);
 
     // NOTE: The checks against iter_max prevent us from making quads on the 3 maximal planes of the
     // grid. This is necessary to avoid redundant quads when meshing adjacent chunks (assuming this
