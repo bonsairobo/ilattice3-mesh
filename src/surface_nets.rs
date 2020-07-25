@@ -10,10 +10,13 @@ pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
 }
 
 pub struct SurfaceNetsOutput<M> {
-    /// The isosurface points.
+    /// Coordinates of every voxel that intersects the isosurface.
+    pub surface_points: Vec<Point>,
+    /// The isosurface points. Parallel to `surface_points`.
     pub positions: Vec<[f32; 3]>,
-    /// The isosurface normals.
+    /// The isosurface normals. Parallel to `surface_points`.
     pub normals: Vec<[f32; 3]>,
+
     /// The triangles belonging to each material.
     pub indices_by_material: HashMap<M, Vec<usize>>,
 }
@@ -31,7 +34,8 @@ where
 {
     let local_extent = extent.with_minimum([0, 0, 0].into());
 
-    let (mut positions, normals, voxel_to_index) = estimate_surface(voxels, &local_extent);
+    let (mut positions, normals, surface_points, voxel_to_index) =
+        estimate_surface(voxels, &local_extent);
 
     // Positions were generated in local coordinates, so translate them back to world coordinates.
     let min: [f32; 3] = extent.get_minimum().into();
@@ -41,12 +45,19 @@ where
         p[2] += min[2];
     }
 
-    let indices_by_material = make_all_quads(voxels, &local_extent, &voxel_to_index, &positions);
+    let indices_by_material = make_all_quads(
+        voxels,
+        &local_extent,
+        &voxel_to_index,
+        &positions,
+        &surface_points,
+    );
 
     SurfaceNetsOutput {
         positions,
         normals,
         indices_by_material,
+        surface_points,
     }
 }
 
@@ -55,7 +66,7 @@ where
 fn estimate_surface<V, T, I, M>(
     voxels: &V,
     extent: &Extent,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<usize>)
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<Point>, Vec<usize>)
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
@@ -71,6 +82,7 @@ where
 
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut surface_points = Vec::new();
     let mut voxel_to_index = vec![0; extent.volume()];
     for p in extent.add_to_supremum(&[-1, -1, -1].into()) {
         // Get the corners of the cube "at" point p.
@@ -82,12 +94,13 @@ where
 
         if let Some((surface_point, normal)) = estimate_surface_point(voxels, &corner_indices, &p) {
             voxel_to_index[p_linear] = positions.len();
+            surface_points.push(p);
             positions.push(surface_point);
             normals.push(normal);
         }
     }
 
-    (positions, normals, voxel_to_index)
+    (positions, normals, surface_points, voxel_to_index)
 }
 
 const CUBE_EDGES: [(usize, usize); 12] = [
@@ -215,6 +228,7 @@ fn make_all_quads<V, T, I, M>(
     extent: &Extent,
     voxel_to_index: &[usize],
     positions: &[[f32; 3]],
+    surface_points: &[Point],
 ) -> HashMap<M, Vec<usize>>
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
@@ -236,8 +250,8 @@ where
 
     let iter_extent = extent.add_to_supremum(&[-1, -1, -1].into());
     let iter_max = iter_extent.get_local_max();
-    for p in iter_extent {
-        let p_linear = I::index_from_local_point(sup, &p);
+    for p in surface_points.iter() {
+        let p_linear = I::index_from_local_point(sup, p);
         // Do edges parallel with the X axis
         if p.y != min.y && p.z != min.z && p.x != iter_max.x {
             maybe_make_quad(

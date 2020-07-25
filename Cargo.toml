@@ -6,4 +6,5 @@ edition = "2018"
 
 [dependencies]
 ilattice3 = { git = 'https://github.com/bonsairobo/ilattice3' }
+# ilattice3 = { path = '../ilattice3' }
 rayon = "1.3.1"
