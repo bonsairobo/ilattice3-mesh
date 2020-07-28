@@ -402,20 +402,23 @@ mod test {
         }
     }
 
-    fn waves_sdf(p: &Point) -> Voxel {
+    const EXTENT_RADIUS: i32 = 32;
+
+    // The higher the frequency (n) the more surface area to mesh.
+    fn bench_sdf(p: &Point) -> Voxel {
         let n = 10.0;
-        let val = ((p.x as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin()
-            + ((p.y as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin()
-            + ((p.z as f32 / 32.0) * n * std::f32::consts::PI / 2.0).sin();
+        let val = ((p.x as f32 / EXTENT_RADIUS as f32) * n * std::f32::consts::PI / 2.0).sin()
+            + ((p.y as f32 / EXTENT_RADIUS as f32) * n * std::f32::consts::PI / 2.0).sin()
+            + ((p.z as f32 / EXTENT_RADIUS as f32) * n * std::f32::consts::PI / 2.0).sin();
 
         Voxel(val)
     }
 
     #[test]
     fn benchmark() {
-        let sample_extent = Extent::from_center_and_radius([0, 0, 0].into(), 32);
+        let sample_extent = Extent::from_center_and_radius([0, 0, 0].into(), EXTENT_RADIUS);
         let samples = VecLatticeMap::<_, YLevelsIndexer>::copy_from_map(
-            &FnLatticeMap::new(waves_sdf),
+            &FnLatticeMap::new(bench_sdf),
             &sample_extent,
         );
 

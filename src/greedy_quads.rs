@@ -19,7 +19,7 @@ pub struct PosNormTangTexMesh {
     pub indices: Vec<usize>,
 }
 
-pub trait GreedyQuadsVoxel<M>: Clone + IsEmpty + PartialEq + Send + Sync {
+pub trait GreedyQuadsVoxel<M>: Clone + IsEmpty + Send + Sync {
     fn material(&self) -> M;
 }
 
@@ -103,8 +103,6 @@ where
             extent.contains_world(p)
                 && !visited.get_world_ref(p)
                 && q_face.is_visible(voxels, extent)
-                // TODO: users might want to have unequal voxels that can still join the same quad
-                // (i.e. if they look the same)
                 && p_val.material() == voxels.get_world_ref(p).material()
         };
 
@@ -252,4 +250,55 @@ where
     }
 
     mesh_vertices
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use ilattice3::{FnLatticeMap, VecLatticeMap, YLevelsIndexer};
+    use std::io::Write;
+
+    #[derive(Clone, PartialEq)]
+    struct Voxel(u16);
+
+    impl IsEmpty for Voxel {
+        fn is_empty(&self) -> bool {
+            self.0 == 0
+        }
+    }
+
+    impl GreedyQuadsVoxel<u16> for Voxel {
+        fn material(&self) -> u16 {
+            self.0
+        }
+    }
+
+    const EXTENT_RADIUS: i32 = 32;
+
+    fn cubes_in_sphere(p: &Point) -> Voxel {
+        let sq_dist = p.dot(p);
+
+        if sq_dist < EXTENT_RADIUS - 1 {
+            Voxel(1)
+        } else {
+            Voxel(0)
+        }
+    }
+
+    #[test]
+    fn benchmark() {
+        let sample_extent = Extent::from_center_and_radius([0, 0, 0].into(), EXTENT_RADIUS);
+        let samples = VecLatticeMap::<_, YLevelsIndexer>::copy_from_map(
+            &FnLatticeMap::new(cubes_in_sphere),
+            &sample_extent,
+        );
+
+        let start = std::time::Instant::now();
+        let _output = greedy_quads(&samples, *samples.get_extent());
+        let elapsed_micros = start.elapsed().as_micros();
+        std::io::stdout()
+            .write(format!("greedy_quads took {} micros\n", elapsed_micros).as_bytes())
+            .unwrap();
+    }
 }
