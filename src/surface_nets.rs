@@ -2,14 +2,14 @@
 
 use ilattice3 as lat;
 use ilattice3::{prelude::*, Extent, HasIndexer, Indexer, CUBE_CORNERS};
-use std::{collections::HashMap, hash::Hash};
+use std::hash::Hash;
 
 pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
     fn distance(&self) -> f32;
     fn material(&self) -> M;
 }
 
-pub struct SurfaceNetsOutput<M> {
+pub struct SurfaceNetsOutput {
     /// Coordinates of every voxel that intersects the isosurface. In padded-chunk-local
     /// coordinates.
     pub surface_points: Vec<Point>,
@@ -17,15 +17,14 @@ pub struct SurfaceNetsOutput<M> {
     pub positions: Vec<[f32; 3]>,
     /// The isosurface normals. Parallel to `surface_points`.
     pub normals: Vec<[f32; 3]>,
-
-    /// The triangles belonging to each material.
-    pub indices_by_material: HashMap<M, Vec<usize>>,
+    /// All of the triangles in the mesh.
+    pub indices: Vec<usize>,
 }
 
 /// Returns a mesh for the isosurface. Assumes `extent` is a padded voxel chunk, so the returned
 /// mesh will be compatible with meshes of adjacent chunks. If a voxel within 2 units of a chunk
 /// boundary changes, then all chunks adjacent to that boundary need to be re-meshed.
-pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput<M>
+pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput
 where
     // It saves quite a bit of time to do linear indexing.
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
@@ -46,7 +45,7 @@ where
         p[2] += min[2];
     }
 
-    let indices_by_material = make_all_quads(
+    let indices = make_all_quads(
         voxels,
         &local_extent,
         &voxel_to_index,
@@ -55,10 +54,10 @@ where
     );
 
     SurfaceNetsOutput {
+        surface_points,
         positions,
         normals,
-        indices_by_material,
-        surface_points,
+        indices,
     }
 }
 
@@ -219,14 +218,17 @@ fn make_all_quads<V, T, I, M>(
     voxel_to_index: &[usize],
     positions: &[[f32; 3]],
     surface_points: &[Point],
-) -> HashMap<M, Vec<usize>>
+) -> Vec<usize>
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
     T: SurfaceNetsVoxel<M>,
     I: Indexer,
     M: Copy + Eq + Hash,
 {
-    let mut material_indices = HashMap::new();
+    // 6 indices per quad, 3 quads per surface point. This is just an upper bound.
+    const MAX_INDICES_PER_SURFACE_POINT: usize = 18;
+    let mut indices = Vec::with_capacity(MAX_INDICES_PER_SURFACE_POINT * surface_points.len());
+
     let min = extent.get_minimum();
     debug_assert_eq!(min, [0, 0, 0].into());
     let sup = extent.get_local_supremum();
@@ -250,7 +252,7 @@ where
                 p_linear + x_stride,
                 y_stride,
                 z_stride,
-                &mut material_indices,
+                &mut indices,
             );
         }
         // Do edges parallel with the Y axis
@@ -263,7 +265,7 @@ where
                 p_linear + y_stride,
                 z_stride,
                 x_stride,
-                &mut material_indices,
+                &mut indices,
             );
         }
         // Do edges parallel with the Z axis
@@ -276,12 +278,12 @@ where
                 p_linear + z_stride,
                 x_stride,
                 y_stride,
-                &mut material_indices,
+                &mut indices,
             );
         }
     }
 
-    material_indices
+    indices
 }
 
 // This is where the "dual" nature of surface nets comes into play.
@@ -320,7 +322,7 @@ fn maybe_make_quad<V, T, M>(
     i2: usize,
     axis_b_stride: usize,
     axis_c_stride: usize,
-    material_indices: &mut HashMap<M, Vec<usize>>,
+    indices: &mut Vec<usize>,
 ) where
     V: GetLinear<Data = T>,
     T: SurfaceNetsVoxel<M>,
@@ -344,20 +346,19 @@ fn maybe_make_quad<V, T, M>(
     let v4 = voxel_to_index[i1 - axis_b_stride - axis_c_stride];
     let (pos1, pos2, pos3, pos4) = (positions[v1], positions[v2], positions[v3], positions[v4]);
     // Split the quad along the shorter axis, rather than the longer one.
-    let (quad, material) = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
+    let quad = if sq_dist(pos1, pos4) < sq_dist(pos2, pos3) {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => ([v1, v2, v4, v1, v4, v3], voxel1.material()),
-            FaceResult::FaceNegative => ([v1, v4, v2, v1, v3, v4], voxel2.material()),
+            FaceResult::FacePositive => [v1, v2, v4, v1, v4, v3],
+            FaceResult::FaceNegative => [v1, v4, v2, v1, v3, v4],
         }
     } else {
         match face_result {
             FaceResult::NoFace => unreachable!(),
-            FaceResult::FacePositive => ([v2, v4, v3, v2, v3, v1], voxel1.material()),
-            FaceResult::FaceNegative => ([v2, v3, v4, v2, v1, v3], voxel2.material()),
+            FaceResult::FacePositive => [v2, v4, v3, v2, v3, v1],
+            FaceResult::FaceNegative => [v2, v3, v4, v2, v1, v3],
         }
     };
-    let indices = material_indices.entry(material).or_insert_with(Vec::new);
     indices.extend_from_slice(&quad);
 }
 
