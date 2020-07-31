@@ -2,11 +2,9 @@
 
 use ilattice3 as lat;
 use ilattice3::{prelude::*, Extent, HasIndexer, Indexer, CUBE_CORNERS};
-use std::hash::Hash;
 
-pub trait SurfaceNetsVoxel<M: Copy + Eq + Hash> {
+pub trait SurfaceNetsVoxel {
     fn distance(&self) -> f32;
-    fn material(&self) -> M;
 }
 
 pub struct SurfaceNetsOutput {
@@ -24,13 +22,12 @@ pub struct SurfaceNetsOutput {
 /// Returns a mesh for the isosurface. Assumes `extent` is a padded voxel chunk, so the returned
 /// mesh will be compatible with meshes of adjacent chunks. If a voxel within 2 units of a chunk
 /// boundary changes, then all chunks adjacent to that boundary need to be re-meshed.
-pub fn surface_nets<V, T, I, M>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput
+pub fn surface_nets<V, T, I>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput
 where
     // It saves quite a bit of time to do linear indexing.
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
-    T: SurfaceNetsVoxel<M>,
+    T: SurfaceNetsVoxel,
     I: Indexer,
-    M: Copy + Eq + Hash,
 {
     let local_extent = extent.with_minimum([0, 0, 0].into());
 
@@ -63,15 +60,14 @@ where
 
 // Find all vertex positions and normals. Also generate a map from grid position to vertex index
 // to be used to look up vertices when generating quads.
-fn estimate_surface<V, T, I, M>(
+fn estimate_surface<V, T, I>(
     voxels: &V,
     extent: &Extent,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<Point>, Vec<usize>)
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
-    T: SurfaceNetsVoxel<M>,
+    T: SurfaceNetsVoxel,
     I: Indexer,
-    M: Copy + Eq + Hash,
 {
     // Precalculate these offsets to do faster linear indexing.
     let sup = extent.get_local_supremum();
@@ -123,15 +119,14 @@ const CUBE_EDGES: [(usize, usize); 12] = [
 //
 // This is done by estimating, for each cube edge, where the isosurface crosses the edge (if it
 // does at all). Then the estimated surface point is the average of these edge crossings.
-fn estimate_surface_point<V, T, M>(
+fn estimate_surface_point<V, T>(
     voxels: &V,
     corner_indices: &[usize],
     point: &lat::Point,
 ) -> Option<([f32; 3], [f32; 3])>
 where
     V: GetLinear<Data = T>,
-    T: SurfaceNetsVoxel<M>,
-    M: Copy + Eq + Hash,
+    T: SurfaceNetsVoxel,
 {
     // Get the signed distance values at each corner of this cube.
     let mut dists = [0.0; 8];
@@ -212,7 +207,7 @@ fn estimate_surface_edge_intersection(
 // touching that surface. The "centers" are actually the vertex positions found earlier. Also,
 // make sure the triangles are facing the right way. See the comments on `maybe_make_quad` to help
 // with understanding the indexing.
-fn make_all_quads<V, T, I, M>(
+fn make_all_quads<V, T, I>(
     voxels: &V,
     extent: &Extent,
     voxel_to_index: &[usize],
@@ -221,13 +216,10 @@ fn make_all_quads<V, T, I, M>(
 ) -> Vec<usize>
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
-    T: SurfaceNetsVoxel<M>,
+    T: SurfaceNetsVoxel,
     I: Indexer,
-    M: Copy + Eq + Hash,
 {
-    // 6 indices per quad, 3 quads per surface point. This is just an upper bound.
-    const MAX_INDICES_PER_SURFACE_POINT: usize = 18;
-    let mut indices = Vec::with_capacity(MAX_INDICES_PER_SURFACE_POINT * surface_points.len());
+    let mut indices = Vec::new();
 
     let min = extent.get_minimum();
     debug_assert_eq!(min, [0, 0, 0].into());
@@ -314,7 +306,7 @@ where
 //
 // then we must find the other 3 quad corners by moving along the other two axes (those orthogonal
 // to A) in the negative directions; these are axis B and axis C.
-fn maybe_make_quad<V, T, M>(
+fn maybe_make_quad<V, T>(
     voxels: &V,
     voxel_to_index: &[usize],
     positions: &[[f32; 3]],
@@ -325,8 +317,7 @@ fn maybe_make_quad<V, T, M>(
     indices: &mut Vec<usize>,
 ) where
     V: GetLinear<Data = T>,
-    T: SurfaceNetsVoxel<M>,
-    M: Copy + Eq + Hash,
+    T: SurfaceNetsVoxel,
 {
     let voxel1 = voxels.get_linear(i1);
     let voxel2 = voxels.get_linear(i2);
@@ -393,11 +384,7 @@ mod test {
     #[derive(Clone)]
     struct Voxel(f32);
 
-    impl SurfaceNetsVoxel<u8> for Voxel {
-        fn material(&self) -> u8 {
-            1
-        }
-
+    impl SurfaceNetsVoxel for Voxel {
         fn distance(&self) -> f32 {
             self.0
         }
@@ -424,7 +411,8 @@ mod test {
         );
 
         let start = std::time::Instant::now();
-        let _output = surface_nets(&samples, samples.get_extent());
+        let output = surface_nets(&samples, samples.get_extent());
+        assert!(!output.indices.is_empty());
         let elapsed_micros = start.elapsed().as_micros();
         std::io::stdout()
             .write(format!("surface_nets took {} micros\n", elapsed_micros).as_bytes())
