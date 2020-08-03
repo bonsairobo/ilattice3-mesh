@@ -36,7 +36,8 @@ pub struct SurfaceNetsOutput {
     pub surface_points: Vec<Point>,
     /// The isosurface points. Parallel to `surface_points`.
     pub positions: Vec<[f32; 3]>,
-    /// The isosurface normals. Parallel to `surface_points`.
+    /// The isosurface normals. Parallel to `surface_points`. These are *not* normalized, since that
+    /// is done most efficiently on the GPU.
     pub normals: Vec<[f32; 3]>,
     /// All of the triangles in the mesh.
     pub indices: Vec<usize>,
@@ -167,27 +168,27 @@ where
         return None;
     }
 
-    let edge_crossings = CUBE_EDGES.iter().filter_map(|&(offset1, offset2)| {
-        estimate_surface_edge_intersection(offset1, offset2, dists[offset1], dists[offset2])
-    });
-
     let mut count = 0;
     let mut sum = [0.0, 0.0, 0.0];
-    for position in edge_crossings {
-        count += 1;
-        sum[0] += position[0];
-        sum[1] += position[1];
-        sum[2] += position[2];
+    for (offset1, offset2) in CUBE_EDGES.iter() {
+        if let Some(intersection) =
+            estimate_surface_edge_intersection(*offset1, *offset2, dists[*offset1], dists[*offset2])
+        {
+            count += 1;
+            sum[0] += intersection[0];
+            sum[1] += intersection[1];
+            sum[2] += intersection[2];
+        }
     }
 
-    // Calculate the normal as the gradient of the distance field.
+    // Calculate the normal as the gradient of the distance field. Don't bother making it a unit
+    // vector, since we'll do this on the GPU.
     let normal_x = (dists[0b001] + dists[0b011] + dists[0b101] + dists[0b111])
         - (dists[0b000] + dists[0b010] + dists[0b100] + dists[0b110]);
     let normal_y = (dists[0b010] + dists[0b011] + dists[0b110] + dists[0b111])
         - (dists[0b000] + dists[0b001] + dists[0b100] + dists[0b101]);
     let normal_z = (dists[0b100] + dists[0b101] + dists[0b110] + dists[0b111])
         - (dists[0b000] + dists[0b001] + dists[0b010] + dists[0b011]);
-    let normal_len = (normal_x * normal_x + normal_y * normal_y + normal_z * normal_z).sqrt();
 
     Some((
         [
@@ -195,11 +196,7 @@ where
             sum[1] / count as f32 + point.y as f32 + 0.5,
             sum[2] / count as f32 + point.z as f32 + 0.5,
         ],
-        [
-            normal_x / normal_len,
-            normal_y / normal_len,
-            normal_z / normal_len,
-        ],
+        [normal_x, normal_y, normal_z],
     ))
 }
 
