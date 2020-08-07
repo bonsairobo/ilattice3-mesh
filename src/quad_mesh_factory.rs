@@ -7,15 +7,11 @@ use std::{collections::HashMap, hash::Hash};
 const QUAD_VERTEX_PERM: [usize; 6] = [0, 1, 2, 2, 1, 3];
 
 /// A trait to make `greedy_quads` more generic in the kinds of meshes it can produce.
-pub trait QuadMeshFactory {
-    type Material: Copy + Eq + Hash + Send + Sync;
+pub trait QuadMeshFactory<M> {
     type Mesh;
 
-    /// Determines whether two voxels can be part of the same quad.
-    fn compatible(m1: &Self::Material, m2: &Self::Material) -> bool;
-
     /// Transforms `quads`, each labeled with some `Material`, into a mesh.
-    fn make_mesh_from_quads(quads: &[(Quad, Self::Material)]) -> Self::Mesh;
+    fn make_mesh_from_quads(quads: &[(Quad, M)]) -> Self::Mesh;
 }
 
 /// A `QuadMeshFactory` that produces a single `PosNormMaterial` mesh.
@@ -23,16 +19,11 @@ pub struct PosNormMaterialQuadMeshFactory<M> {
     marker: std::marker::PhantomData<M>,
 }
 
-impl<M> QuadMeshFactory for PosNormMaterialQuadMeshFactory<M>
+impl<M> QuadMeshFactory<M> for PosNormMaterialQuadMeshFactory<M>
 where
-    M: Copy + Eq + Hash + Send + Sync,
+    M: Copy,
 {
-    type Material = M;
     type Mesh = PosNormMaterialMesh<M>;
-
-    fn compatible(_m1: &Self::Material, _m2: &Self::Material) -> bool {
-        true
-    }
 
     fn make_mesh_from_quads(quads: &[(Quad, M)]) -> Self::Mesh {
         // Group the quad vertices, keyed by material.
@@ -110,16 +101,11 @@ pub struct PosNormTangTexQuadMeshFactory<M> {
     marker: std::marker::PhantomData<M>,
 }
 
-impl<M> QuadMeshFactory for PosNormTangTexQuadMeshFactory<M>
+impl<M> QuadMeshFactory<M> for PosNormTangTexQuadMeshFactory<M>
 where
-    M: Copy + Eq + Hash + Send + Sync,
+    M: Copy + Eq + Hash,
 {
-    type Material = M;
     type Mesh = HashMap<M, PosNormTangTexMesh>;
-
-    fn compatible(m1: &Self::Material, m2: &Self::Material) -> bool {
-        *m1 == *m2
-    }
 
     fn make_mesh_from_quads(quads: &[(Quad, M)]) -> Self::Mesh {
         // Group the quad vertices, keyed by material.

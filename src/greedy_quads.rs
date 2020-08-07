@@ -5,7 +5,6 @@ use ilattice3::{
     VecLatticeMap, YLevelsIndexer, ALL_DIRECTIONS,
 };
 use rayon::prelude::*;
-use std::hash::Hash;
 
 pub trait GreedyQuadsVoxel: Copy + IsEmpty + Send + Sync {
     type Material;
@@ -18,13 +17,14 @@ pub trait GreedyQuadsVoxel: Copy + IsEmpty + Send + Sync {
 //
 /// A data-parallelized version of the "Greedy Meshing" algorithm described here:
 /// https://0fps.net/2012/06/30/meshing-in-a-minecraft-game/
-pub fn greedy_quads<V, T, F>(voxels: &V, extent: Extent) -> F::Mesh
+pub fn greedy_quads<V, T, M, F>(voxels: &V, extent: Extent) -> F::Mesh
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<Material = <F as QuadMeshFactory>::Material>,
-    F: QuadMeshFactory,
+    T: GreedyQuadsVoxel<Material = M>,
+    F: QuadMeshFactory<M>,
+    M: Eq + Send + Sync,
 {
-    let quads = boundary_quads::<_, _, F>(voxels, extent);
+    let quads = boundary_quads(voxels, extent);
 
     F::make_mesh_from_quads(&quads)
 }
@@ -62,12 +62,11 @@ fn grow_quad_extent(
 }
 
 /// Greedily find visible quads (of the same type) in the plane.
-fn boundary_quads_in_plane<V, T, M, F>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
+fn boundary_quads_in_plane<V, T, M>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T>,
     T: GreedyQuadsVoxel<Material = M>,
-    M: Copy + Hash + Eq + Send + Sync,
-    F: QuadMeshFactory<Material = M>,
+    M: Eq,
 {
     let Quad {
         extent: quad_extent,
@@ -91,13 +90,16 @@ where
             continue;
         }
 
-        let point_can_join_quad = |p: &Point| {
-            let q_face = Face::new(*p, Normal::Vector(n));
+        let point_can_join_quad = |q: &Point| {
+            if !extent.contains_world(q) {
+                return false;
+            }
+            let q_val = voxels.get_world_ref(q);
 
-            extent.contains_world(p)
-                && !visited.get_world_ref(p)
-                && q_face.is_visible(voxels, extent)
-                && F::compatible(&p_val.material(), &voxels.get_world_ref(p).material())
+            !q_val.is_empty()
+                && !visited.get_world_ref(q)
+                && Face::new(*q, Normal::Vector(n)).is_visible(voxels, extent)
+                && p_val.material() == q_val.material()
         };
 
         let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
@@ -108,15 +110,15 @@ where
     quads
 }
 
-fn boundary_quads_unidirectional<V, T, F>(
+fn boundary_quads_unidirectional<V, T, M>(
     voxels: &V,
     extent: Extent,
     normal: Normal,
-) -> Vec<(Quad, <F as QuadMeshFactory>::Material)>
+) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<Material = <F as QuadMeshFactory>::Material>,
-    F: QuadMeshFactory,
+    T: GreedyQuadsVoxel<Material = M>,
+    M: Eq + Send + Sync,
 {
     // Iterate over slices in the direction of their normal vector.
     // Note that we skip the left-most plane because it will be visited in the opposite normal
@@ -167,7 +169,7 @@ where
                 normal,
             );
 
-            boundary_quads_in_plane::<_, _, _, F>(voxels, &extent, quad)
+            boundary_quads_in_plane(voxels, &extent, quad)
         })
         .flatten()
         .collect()
@@ -175,19 +177,16 @@ where
 
 /// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
 /// not unique and is not guaranteed to be optimal.
-fn boundary_quads<V, T, F>(
-    voxels: &V,
-    extent: Extent,
-) -> Vec<(Quad, <F as QuadMeshFactory>::Material)>
+fn boundary_quads<V, T, M>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<Material = <F as QuadMeshFactory>::Material>,
-    F: QuadMeshFactory,
+    T: GreedyQuadsVoxel<Material = M>,
+    M: Eq + Send + Sync,
 {
     ALL_DIRECTIONS
         .par_iter()
         .cloned()
-        .map(|d| boundary_quads_unidirectional::<_, _, F>(voxels, extent, Normal::Axis(d)))
+        .map(|d| boundary_quads_unidirectional(voxels, extent, Normal::Axis(d)))
         .flatten()
         .collect()
 }
@@ -239,7 +238,7 @@ mod test {
         );
 
         let start = std::time::Instant::now();
-        let _output = greedy_quads::<_, _, PosNormTangTexQuadMeshFactory<u16>>(
+        let _output = greedy_quads::<_, _, _, PosNormTangTexQuadMeshFactory<u16>>(
             &samples,
             *samples.get_extent(),
         );
