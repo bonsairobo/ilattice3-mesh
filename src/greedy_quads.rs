@@ -1,6 +1,6 @@
 use crate::{
     face::Face,
-    quad::{Quad, QuadVertices},
+    quad::{Quad, QuadCornerInfo},
 };
 
 use ilattice3::{
@@ -8,21 +8,16 @@ use ilattice3::{
     VecLatticeMap, YLevelsIndexer, ALL_DIRECTIONS,
 };
 use rayon::prelude::*;
+use std::cmp::{Ord, Ordering};
 use std::{collections::HashMap, hash::Hash};
-
-#[derive(Default)]
-pub struct PosNormTangTexMesh {
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub tangents: Vec<[f32; 4]>,
-    pub tex_coords: Vec<[f32; 2]>,
-    pub indices: Vec<usize>,
-}
 
 pub trait GreedyQuadsVoxel<M>: Clone + IsEmpty + Send + Sync {
     fn material(&self) -> M;
 }
 
+// TODO: There is still a lot of room for optimization in this algorithm, since I wrote it a long
+// time ago without benchmarking it.
+//
 /// A data-parallelized version of the "Greedy Meshing" algorithm described here:
 /// https://0fps.net/2012/06/30/meshing-in-a-minecraft-game/
 pub fn greedy_quads<V, T, M>(voxels: &V, extent: Extent) -> HashMap<M, PosNormTangTexMesh>
@@ -33,7 +28,7 @@ where
 {
     let quads = boundary_quads(voxels, extent);
 
-    make_mesh_vertices_from_quads(&quads)
+    make_mesh_vertices_from_quads::<_, PosNormTangTexQuadVertexFactory>(&quads)
 }
 
 /// This is the "greedy" part of finding quads.
@@ -197,59 +192,96 @@ where
 
 const QUAD_VERTEX_PERM: [usize; 6] = [0, 1, 2, 2, 1, 3];
 
-#[derive(Default)]
-struct QuadIndexIterator {
-    iter: usize,
-}
-
-impl QuadIndexIterator {
-    pub fn get_for_n_vertices(self, n_vertices: usize) -> Vec<usize> {
-        self.take(n_vertices * 6 / 4).collect()
-    }
-}
-
-impl Iterator for QuadIndexIterator {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        let ret = Some(4 * (self.iter / 6) + QUAD_VERTEX_PERM[self.iter % 6]);
-        self.iter += 1;
-
-        ret
-    }
-}
-
-fn make_mesh_vertices_from_quads<M>(quads: &[(Quad, M)]) -> HashMap<M, PosNormTangTexMesh>
+fn make_mesh_vertices_from_quads<M, F>(quads: &[(Quad, M)]) -> HashMap<M, F::Mesh>
 where
     M: Clone + Eq + Hash,
+    F: QuadVertexFactory,
 {
     // Group the quad vertices, keyed by material.
-    let mut mesh_vertices = HashMap::new();
-    for (q, material) in quads.iter() {
-        let vertices = mesh_vertices
-            .entry(material.clone())
-            .or_insert_with(PosNormTangTexMesh::default);
-        let QuadVertices {
-            positions,
-            tex_coords,
-            normal,
-            tangent: t,
-        } = q.mesh_vertices();
-        vertices.positions.extend(positions.iter());
-        vertices.tex_coords.extend(tex_coords.iter());
-        // Repeat the normal and tangent for each vertex.
-        vertices.normals.extend_from_slice(&[normal; 4]);
-        vertices
-            .tangents
-            .extend_from_slice(&[[t[0], t[1], t[2], 1.0]; 4]);
-        vertices.indices.extend(
-            QuadIndexIterator::default()
-                .get_for_n_vertices(vertices.positions.len())
-                .iter(),
-        );
+    let mut material_meshes = HashMap::new();
+    for (quad, material) in quads.iter() {
+        let mesh = material_meshes.entry(material.clone()).or_default();
+        F::add_quad_vertices_to_mesh(quad, mesh);
     }
 
-    mesh_vertices
+    material_meshes
+}
+
+pub trait QuadVertexFactory {
+    type Mesh: Default;
+
+    fn add_quad_vertices_to_mesh(quad: &Quad, mesh: &mut Self::Mesh);
+}
+
+pub struct PosNormTangTexQuadVertexFactory;
+
+impl QuadVertexFactory for PosNormTangTexQuadVertexFactory {
+    type Mesh = PosNormTangTexMesh;
+
+    fn add_quad_vertices_to_mesh(quad: &Quad, mesh: &mut Self::Mesh) {
+        let n: Point = quad.normal.into();
+
+        let QuadCornerInfo {
+            span: PlaneSpanInfo { u, v },
+            min,
+            u_corner,
+            v_corner,
+            max,
+            tex_max_u,
+            tex_max_v,
+        } = quad.get_corner_info();
+
+        let n_sign = (n.x + n.y + n.z).signum();
+        let which_plane = if n_sign > 0 { n } else { [0, 0, 0].into() };
+
+        let min: [f32; 3] = (min + which_plane).into();
+        let u_corner: [f32; 3] = (u_corner + u + which_plane).into();
+        let v_corner: [f32; 3] = (v_corner + v + which_plane).into();
+        let max: [f32; 3] = (max + u + v + which_plane).into();
+
+        // counter-clockwise winding
+        let (positions, tex_coords) = match n_sign.cmp(&0) {
+            Ordering::Greater => (
+                [min.into(), u_corner.into(), v_corner.into(), max.into()],
+                [
+                    [0.0, 0.0],
+                    [tex_max_u, 0.0],
+                    [0.0, tex_max_v],
+                    [tex_max_u, tex_max_v],
+                ],
+            ),
+            Ordering::Less => (
+                [min.into(), v_corner.into(), u_corner.into(), max.into()],
+                [
+                    [0.0, 0.0],
+                    [0.0, tex_max_v],
+                    [tex_max_u, 0.0],
+                    [tex_max_u, tex_max_v],
+                ],
+            ),
+            Ordering::Equal => panic!("Zero normal!"),
+        };
+
+        let tangent = [u.x as f32, u.y as f32, u.z as f32, 1.0];
+
+        let index_start = mesh.positions.len();
+        let indices = QUAD_VERTEX_PERM.iter().map(|i| index_start + i);
+
+        mesh.positions.extend(&positions);
+        mesh.tex_coords.extend(&tex_coords);
+        mesh.normals.extend(&[n.into(); 4]);
+        mesh.tangents.extend(&[tangent; 4]);
+        mesh.indices.extend(indices);
+    }
+}
+
+#[derive(Default)]
+pub struct PosNormTangTexMesh {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub tangents: Vec<[f32; 4]>,
+    pub tex_coords: Vec<[f32; 2]>,
+    pub indices: Vec<usize>,
 }
 
 #[cfg(test)]
