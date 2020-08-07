@@ -20,15 +20,15 @@ pub trait GreedyQuadsVoxel<M>: Clone + IsEmpty + Send + Sync {
 //
 /// A data-parallelized version of the "Greedy Meshing" algorithm described here:
 /// https://0fps.net/2012/06/30/meshing-in-a-minecraft-game/
-pub fn greedy_quads<V, T, M>(voxels: &V, extent: Extent) -> HashMap<M, PosNormTangTexMesh>
+pub fn greedy_quads<V, T, F>(voxels: &V, extent: Extent) -> F::Mesh
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<M>,
-    M: Clone + Eq + Hash + Send + Sync,
+    T: GreedyQuadsVoxel<<F as QuadMeshFactory>::Material>,
+    F: QuadMeshFactory,
 {
-    let quads = boundary_quads::<_, _, _, PosNormTangTexQuadMeshFactory<M>>(voxels, extent);
+    let quads = boundary_quads::<_, _, F>(voxels, extent);
 
-    PosNormTangTexQuadMeshFactory::<M>::make_mesh_from_quads(&quads)
+    F::make_mesh_from_quads(&quads)
 }
 
 /// This is the "greedy" part of finding quads.
@@ -68,7 +68,7 @@ fn boundary_quads_in_plane<V, T, M, F>(voxels: &V, extent: &Extent, plane: Quad)
 where
     V: GetWorldRef<Data = T>,
     T: GreedyQuadsVoxel<M>,
-    M: Clone + Hash + Eq,
+    M: Clone + Hash + Eq + Send + Sync,
     F: QuadMeshFactory<Material = M>,
 {
     let Quad {
@@ -110,16 +110,15 @@ where
     quads
 }
 
-fn boundary_quads_unidirectional<V, T, M, F>(
+fn boundary_quads_unidirectional<V, T, F>(
     voxels: &V,
     extent: Extent,
     normal: Normal,
-) -> Vec<(Quad, M)>
+) -> Vec<(Quad, <F as QuadMeshFactory>::Material)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<M>,
-    M: Clone + Eq + Hash + Send + Sync,
-    F: QuadMeshFactory<Material = M>,
+    T: GreedyQuadsVoxel<<F as QuadMeshFactory>::Material>,
+    F: QuadMeshFactory,
 {
     // Iterate over slices in the direction of their normal vector.
     // Note that we skip the left-most plane because it will be visited in the opposite normal
@@ -178,17 +177,19 @@ where
 
 /// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
 /// not unique and is not guaranteed to be optimal.
-fn boundary_quads<V, T, M, F>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
+fn boundary_quads<V, T, F>(
+    voxels: &V,
+    extent: Extent,
+) -> Vec<(Quad, <F as QuadMeshFactory>::Material)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<M>,
-    M: Clone + Eq + Hash + Send + Sync,
-    F: QuadMeshFactory<Material = M>,
+    T: GreedyQuadsVoxel<<F as QuadMeshFactory>::Material>,
+    F: QuadMeshFactory,
 {
     ALL_DIRECTIONS
         .par_iter()
         .cloned()
-        .map(|d| boundary_quads_unidirectional::<_, _, _, F>(voxels, extent, Normal::Axis(d)))
+        .map(|d| boundary_quads_unidirectional::<_, _, F>(voxels, extent, Normal::Axis(d)))
         .flatten()
         .collect()
 }
@@ -197,7 +198,7 @@ const QUAD_VERTEX_PERM: [usize; 6] = [0, 1, 2, 2, 1, 3];
 
 /// A trait to make `greedy_quads` more generic in the kinds of meshes it can produce.
 pub trait QuadMeshFactory {
-    type Material: Clone + Eq + Hash;
+    type Material: Clone + Eq + Hash + Send + Sync;
     type Mesh;
 
     /// Determines whether two voxels can be part of the same quad.
@@ -214,7 +215,7 @@ pub struct PosNormTangTexQuadMeshFactory<M> {
 
 impl<M> QuadMeshFactory for PosNormTangTexQuadMeshFactory<M>
 where
-    M: Clone + Eq + Hash,
+    M: Clone + Eq + Hash + Send + Sync,
 {
     type Material = M;
     type Mesh = HashMap<M, PosNormTangTexMesh>;
@@ -357,7 +358,10 @@ mod test {
         );
 
         let start = std::time::Instant::now();
-        let _output = greedy_quads(&samples, *samples.get_extent());
+        let _output = greedy_quads::<_, _, PosNormTangTexQuadMeshFactory<u16>>(
+            &samples,
+            *samples.get_extent(),
+        );
         let elapsed_micros = start.elapsed().as_micros();
         std::io::stdout()
             .write(format!("greedy_quads took {} micros\n", elapsed_micros).as_bytes())
