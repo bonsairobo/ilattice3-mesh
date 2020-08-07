@@ -7,6 +7,8 @@ mod greedy_quads;
 mod quad;
 mod surface_nets;
 
-pub use greedy_quads::{greedy_quads, GreedyQuadsVoxel, PosNormTangTexMesh};
+pub use greedy_quads::{
+    greedy_quads, GreedyQuadsVoxel, PosNormTangTexMesh, PosNormTangTexQuadMeshFactory,
+};
 pub use quad::Quad;
 pub use surface_nets::{surface_nets, SurfaceNetsOutput, SurfaceNetsVoxel};

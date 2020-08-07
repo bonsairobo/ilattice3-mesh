@@ -306,15 +306,6 @@ pub struct PosNormTangTexMesh {
     pub indices: Vec<usize>,
 }
 
-#[derive(Default)]
-pub struct PosColorNormTexMesh {
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub tangents: Vec<[f32; 4]>,
-    pub tex_coords: Vec<[f32; 2]>,
-    pub indices: Vec<usize>,
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
