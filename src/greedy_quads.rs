@@ -26,7 +26,8 @@ where
     T: GreedyQuadsVoxel<M>,
     M: Clone + Eq + Hash + Send + Sync,
 {
-    let quads = boundary_quads(voxels, extent);
+    let compatible = |t1: &T, t2: &T| t1.material() == t2.material();
+    let quads = boundary_quads(voxels, extent, compatible);
 
     make_mesh_vertices_from_quads::<_, PosNormTangTexQuadVertexFactory>(&quads)
 }
@@ -114,15 +115,17 @@ where
     quads
 }
 
-fn boundary_quads_unidirectional<V, T, M>(
+fn boundary_quads_unidirectional<V, T, M, C>(
     voxels: &V,
     extent: Extent,
     normal: Normal,
+    compatible: C,
 ) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
-    M: Eq + Hash + Send + Sync,
+    M: Send + Sync,
+    C: Fn(&T, &T) -> bool + Copy + Send + Sync,
 {
     // Iterate over slices in the direction of their normal vector.
     // Note that we skip the left-most plane because it will be visited in the opposite normal
@@ -173,7 +176,6 @@ where
                 normal,
             );
 
-            let compatible = |t1: &T, t2: &T| t1.material() == t2.material();
             boundary_quads_in_plane(voxels, &extent, quad, compatible)
         })
         .flatten()
@@ -182,16 +184,17 @@ where
 
 /// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
 /// not unique and is not guaranteed to be optimal.
-fn boundary_quads<V, T, M>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
+fn boundary_quads<V, T, M, C>(voxels: &V, extent: Extent, compatible: C) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
-    M: Eq + Hash + Send + Sync,
+    M: Send + Sync,
+    C: Fn(&T, &T) -> bool + Copy + Send + Sync,
 {
     ALL_DIRECTIONS
         .par_iter()
         .cloned()
-        .map(|d| boundary_quads_unidirectional(voxels, extent, Normal::Axis(d)))
+        .map(|d| boundary_quads_unidirectional(voxels, extent, Normal::Axis(d), compatible))
         .flatten()
         .collect()
 }
