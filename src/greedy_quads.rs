@@ -64,11 +64,16 @@ fn grow_quad_extent(
 }
 
 /// Greedily find visible quads (of the same type) in the plane.
-fn boundary_quads_in_plane<V, T, M>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
+fn boundary_quads_in_plane<V, T, M, C>(
+    voxels: &V,
+    extent: &Extent,
+    plane: Quad,
+    compatible: C,
+) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T>,
     T: GreedyQuadsVoxel<M>,
-    M: Eq + Hash,
+    C: Fn(&T, &T) -> bool,
 {
     let Quad {
         extent: quad_extent,
@@ -98,7 +103,7 @@ where
             extent.contains_world(p)
                 && !visited.get_world_ref(p)
                 && q_face.is_visible(voxels, extent)
-                && p_val.material() == voxels.get_world_ref(p).material()
+                && compatible(&p_val, &voxels.get_world_ref(p))
         };
 
         let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
@@ -168,7 +173,8 @@ where
                 normal,
             );
 
-            boundary_quads_in_plane(voxels, &extent, quad)
+            let compatible = |t1: &T, t2: &T| t1.material() == t2.material();
+            boundary_quads_in_plane(voxels, &extent, quad, compatible)
         })
         .flatten()
         .collect()
@@ -277,6 +283,15 @@ impl QuadVertexFactory for PosNormTangTexQuadVertexFactory {
 
 #[derive(Default)]
 pub struct PosNormTangTexMesh {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub tangents: Vec<[f32; 4]>,
+    pub tex_coords: Vec<[f32; 2]>,
+    pub indices: Vec<usize>,
+}
+
+#[derive(Default)]
+pub struct PosColorNormTexMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub tangents: Vec<[f32; 4]>,
