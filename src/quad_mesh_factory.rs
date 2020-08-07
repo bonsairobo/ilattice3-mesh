@@ -30,8 +30,8 @@ where
     type Material = M;
     type Mesh = PosNormMaterialMesh<M>;
 
-    fn compatible(m1: &Self::Material, m2: &Self::Material) -> bool {
-        *m1 == *m2
+    fn compatible(_m1: &Self::Material, _m2: &Self::Material) -> bool {
+        true
     }
 
     fn make_mesh_from_quads(quads: &[(Quad, M)]) -> Self::Mesh {
