@@ -11,8 +11,10 @@ use rayon::prelude::*;
 use std::cmp::{Ord, Ordering};
 use std::{collections::HashMap, hash::Hash};
 
-pub trait GreedyQuadsVoxel<M>: Copy + IsEmpty + Send + Sync {
-    fn material(&self) -> M;
+pub trait GreedyQuadsVoxel: Copy + IsEmpty + Send + Sync {
+    type Material;
+
+    fn material(&self) -> Self::Material;
 }
 
 // TODO: There is still a lot of room for optimization in this algorithm, since I wrote it a long
@@ -23,7 +25,7 @@ pub trait GreedyQuadsVoxel<M>: Copy + IsEmpty + Send + Sync {
 pub fn greedy_quads<V, T, F>(voxels: &V, extent: Extent) -> F::Mesh
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<<F as QuadMeshFactory>::Material>,
+    T: GreedyQuadsVoxel<Material = <F as QuadMeshFactory>::Material>,
     F: QuadMeshFactory,
 {
     let quads = boundary_quads::<_, _, F>(voxels, extent);
@@ -67,7 +69,7 @@ fn grow_quad_extent(
 fn boundary_quads_in_plane<V, T, M, F>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T>,
-    T: GreedyQuadsVoxel<M>,
+    T: GreedyQuadsVoxel<Material = M>,
     M: Copy + Hash + Eq + Send + Sync,
     F: QuadMeshFactory<Material = M>,
 {
@@ -117,7 +119,7 @@ fn boundary_quads_unidirectional<V, T, F>(
 ) -> Vec<(Quad, <F as QuadMeshFactory>::Material)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<<F as QuadMeshFactory>::Material>,
+    T: GreedyQuadsVoxel<Material = <F as QuadMeshFactory>::Material>,
     F: QuadMeshFactory,
 {
     // Iterate over slices in the direction of their normal vector.
@@ -183,7 +185,7 @@ fn boundary_quads<V, T, F>(
 ) -> Vec<(Quad, <F as QuadMeshFactory>::Material)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
-    T: GreedyQuadsVoxel<<F as QuadMeshFactory>::Material>,
+    T: GreedyQuadsVoxel<Material = <F as QuadMeshFactory>::Material>,
     F: QuadMeshFactory,
 {
     ALL_DIRECTIONS
@@ -406,8 +408,10 @@ mod test {
         }
     }
 
-    impl GreedyQuadsVoxel<u16> for Voxel {
-        fn material(&self) -> u16 {
+    impl GreedyQuadsVoxel for Voxel {
+        type Material = u16;
+
+        fn material(&self) -> Self::Material {
             self.0
         }
     }
