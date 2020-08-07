@@ -236,10 +236,7 @@ where
     }
 }
 
-impl<M> PosNormTangTexQuadMeshFactory<M>
-where
-    M: Clone + Eq + Hash,
-{
+impl<M> PosNormTangTexQuadMeshFactory<M> {
     fn add_quad_vertices_to_mesh(quad: &Quad, mesh: &mut PosNormTangTexMesh) {
         let n: Point = quad.normal.into();
 
