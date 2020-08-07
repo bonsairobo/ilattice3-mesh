@@ -26,10 +26,9 @@ where
     T: GreedyQuadsVoxel<M>,
     M: Clone + Eq + Hash + Send + Sync,
 {
-    let compatible = |t1: &T, t2: &T| t1.material() == t2.material();
-    let quads = boundary_quads(voxels, extent, compatible);
+    let quads = boundary_quads::<_, _, _, PosNormTangTexQuadMeshFactory<M>>(voxels, extent);
 
-    make_mesh_vertices_from_quads::<_, PosNormTangTexQuadVertexFactory>(&quads)
+    PosNormTangTexQuadMeshFactory::<M>::make_mesh_from_quads(&quads)
 }
 
 /// This is the "greedy" part of finding quads.
@@ -65,16 +64,12 @@ fn grow_quad_extent(
 }
 
 /// Greedily find visible quads (of the same type) in the plane.
-fn boundary_quads_in_plane<V, T, M, C>(
-    voxels: &V,
-    extent: &Extent,
-    plane: Quad,
-    compatible: C,
-) -> Vec<(Quad, M)>
+fn boundary_quads_in_plane<V, T, M, F>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T>,
     T: GreedyQuadsVoxel<M>,
-    C: Fn(&T, &T) -> bool,
+    M: Clone + Hash + Eq,
+    F: QuadMeshFactory<Material = M>,
 {
     let Quad {
         extent: quad_extent,
@@ -104,7 +99,7 @@ where
             extent.contains_world(p)
                 && !visited.get_world_ref(p)
                 && q_face.is_visible(voxels, extent)
-                && compatible(&p_val, &voxels.get_world_ref(p))
+                && F::compatible(&p_val.material(), &voxels.get_world_ref(p).material())
         };
 
         let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
@@ -115,17 +110,16 @@ where
     quads
 }
 
-fn boundary_quads_unidirectional<V, T, M, C>(
+fn boundary_quads_unidirectional<V, T, M, F>(
     voxels: &V,
     extent: Extent,
     normal: Normal,
-    compatible: C,
 ) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
-    M: Send + Sync,
-    C: Fn(&T, &T) -> bool + Copy + Send + Sync,
+    M: Clone + Eq + Hash + Send + Sync,
+    F: QuadMeshFactory<Material = M>,
 {
     // Iterate over slices in the direction of their normal vector.
     // Note that we skip the left-most plane because it will be visited in the opposite normal
@@ -176,7 +170,7 @@ where
                 normal,
             );
 
-            boundary_quads_in_plane(voxels, &extent, quad, compatible)
+            boundary_quads_in_plane::<_, _, _, F>(voxels, &extent, quad)
         })
         .flatten()
         .collect()
@@ -184,50 +178,68 @@ where
 
 /// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
 /// not unique and is not guaranteed to be optimal.
-fn boundary_quads<V, T, M, C>(voxels: &V, extent: Extent, compatible: C) -> Vec<(Quad, M)>
+fn boundary_quads<V, T, M, F>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<M>,
-    M: Send + Sync,
-    C: Fn(&T, &T) -> bool + Copy + Send + Sync,
+    M: Clone + Eq + Hash + Send + Sync,
+    F: QuadMeshFactory<Material = M>,
 {
     ALL_DIRECTIONS
         .par_iter()
         .cloned()
-        .map(|d| boundary_quads_unidirectional(voxels, extent, Normal::Axis(d), compatible))
+        .map(|d| boundary_quads_unidirectional::<_, _, _, F>(voxels, extent, Normal::Axis(d)))
         .flatten()
         .collect()
 }
 
 const QUAD_VERTEX_PERM: [usize; 6] = [0, 1, 2, 2, 1, 3];
 
-fn make_mesh_vertices_from_quads<M, F>(quads: &[(Quad, M)]) -> HashMap<M, F::Mesh>
+/// A trait to make `greedy_quads` more generic in the kinds of meshes it can produce.
+pub trait QuadMeshFactory {
+    type Material: Clone + Eq + Hash;
+    type Mesh;
+
+    /// Determines whether two voxels can be part of the same quad.
+    fn compatible(m1: &Self::Material, m2: &Self::Material) -> bool;
+
+    /// Transforms `quads`, each labeled with some `Material`, into a mesh.
+    fn make_mesh_from_quads(quads: &[(Quad, Self::Material)]) -> Self::Mesh;
+}
+
+/// A `QuadMeshFactory` that produces one `PosNormTangTex` mesh per material.
+pub struct PosNormTangTexQuadMeshFactory<M> {
+    marker: std::marker::PhantomData<M>,
+}
+
+impl<M> QuadMeshFactory for PosNormTangTexQuadMeshFactory<M>
 where
     M: Clone + Eq + Hash,
-    F: QuadVertexFactory,
 {
-    // Group the quad vertices, keyed by material.
-    let mut material_meshes = HashMap::new();
-    for (quad, material) in quads.iter() {
-        let mesh = material_meshes.entry(material.clone()).or_default();
-        F::add_quad_vertices_to_mesh(quad, mesh);
+    type Material = M;
+    type Mesh = HashMap<M, PosNormTangTexMesh>;
+
+    fn compatible(m1: &Self::Material, m2: &Self::Material) -> bool {
+        *m1 == *m2
     }
 
-    material_meshes
+    fn make_mesh_from_quads(quads: &[(Quad, M)]) -> Self::Mesh {
+        // Group the quad vertices, keyed by material.
+        let mut material_meshes = HashMap::new();
+        for (quad, material) in quads.iter() {
+            let mesh = material_meshes.entry(material.clone()).or_default();
+            Self::add_quad_vertices_to_mesh(quad, mesh);
+        }
+
+        material_meshes
+    }
 }
 
-pub trait QuadVertexFactory {
-    type Mesh: Default;
-
-    fn add_quad_vertices_to_mesh(quad: &Quad, mesh: &mut Self::Mesh);
-}
-
-pub struct PosNormTangTexQuadVertexFactory;
-
-impl QuadVertexFactory for PosNormTangTexQuadVertexFactory {
-    type Mesh = PosNormTangTexMesh;
-
-    fn add_quad_vertices_to_mesh(quad: &Quad, mesh: &mut Self::Mesh) {
+impl<M> PosNormTangTexQuadMeshFactory<M>
+where
+    M: Clone + Eq + Hash,
+{
+    fn add_quad_vertices_to_mesh(quad: &Quad, mesh: &mut PosNormTangTexMesh) {
         let n: Point = quad.normal.into();
 
         let QuadCornerInfo {
