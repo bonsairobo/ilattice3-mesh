@@ -1,4 +1,4 @@
-use crate::{face::Face, quad::Quad, QuadMeshFactory};
+use crate::{face::Face, quad::Quad};
 
 use ilattice3::{
     fill_extent, prelude::*, Direction, Extent, IsEmpty, Normal, PlaneSpanInfo, Point,
@@ -17,100 +17,24 @@ pub trait GreedyQuadsVoxel: Copy + IsEmpty + Send + Sync {
 //
 /// A data-parallelized version of the "Greedy Meshing" algorithm described here:
 /// https://0fps.net/2012/06/30/meshing-in-a-minecraft-game/
-pub fn greedy_quads<V, T, M, F>(voxels: &V, extent: Extent) -> F::Mesh
+///
+/// Returns all same-material quads of visible faces (only belonging to one non-empty voxel). The
+/// set of quads is not unique and is not guaranteed to be optimal.
+pub fn greedy_quads<V, T, M>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
 where
     V: GetWorldRef<Data = T> + Send + Sync,
     T: GreedyQuadsVoxel<Material = M>,
-    F: QuadMeshFactory<M>,
     M: Eq + Send + Sync,
 {
-    let quads = boundary_quads(voxels, extent);
-
-    F::make_mesh_from_quads(&quads)
+    ALL_DIRECTIONS
+        .par_iter()
+        .cloned()
+        .map(|d| greedy_quads_unidirectional(voxels, extent, Normal::Axis(d)))
+        .flatten()
+        .collect()
 }
 
-/// This is the "greedy" part of finding quads.
-fn grow_quad_extent(
-    min: &Point,
-    u: &Point,
-    v: &Point,
-    point_can_join_quad_fn: &impl Fn(&Point) -> bool,
-) -> Extent {
-    // Grow quad:
-    // (1) in u direction until reaching a point that can't join.
-    let mut max = *min;
-    loop {
-        let next_max = max + *u;
-        if !point_can_join_quad_fn(&next_max) {
-            break;
-        }
-        max = next_max;
-    }
-    // (2) in v direction until reaching row that can't join (entirely).
-    let mut row = Extent::from_min_and_world_max(*min, max);
-    'outer: loop {
-        let next_row = row + *v;
-        for row_p in next_row {
-            if !point_can_join_quad_fn(&row_p) {
-                break 'outer;
-            }
-        }
-        row = next_row;
-    }
-
-    Extent::from_min_and_world_max(*min, row.get_world_max())
-}
-
-/// Greedily find visible quads (of the same type) in the plane.
-fn boundary_quads_in_plane<V, T, M>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
-where
-    V: GetWorldRef<Data = T>,
-    T: GreedyQuadsVoxel<Material = M>,
-    M: Eq,
-{
-    let Quad {
-        extent: quad_extent,
-        normal,
-    } = plane;
-    let PlaneSpanInfo { u, v } = normal.get_plane_span_info();
-    let n = Point::from(normal);
-
-    let mut visited = VecLatticeMap::<_, YLevelsIndexer>::fill(quad_extent, false);
-
-    let mut quads = vec![];
-    for p in &quad_extent {
-        let p_val = voxels.get_world_ref(&p);
-        if p_val.is_empty() || visited.get_world(&p) {
-            continue;
-        }
-
-        let face = Face::new(p, Normal::Vector(n));
-
-        if !face.is_visible(voxels, extent) {
-            continue;
-        }
-
-        let point_can_join_quad = |q: &Point| {
-            if !extent.contains_world(q) {
-                return false;
-            }
-            let q_val = voxels.get_world_ref(q);
-
-            !q_val.is_empty()
-                && !visited.get_world_ref(q)
-                && Face::new(*q, Normal::Vector(n)).is_visible(voxels, extent)
-                && p_val.material() == q_val.material()
-        };
-
-        let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
-        fill_extent(&mut visited, &quad_extent, true);
-        quads.push((Quad::new(quad_extent, normal), p_val.material()));
-    }
-
-    quads
-}
-
-fn boundary_quads_unidirectional<V, T, M>(
+fn greedy_quads_unidirectional<V, T, M>(
     voxels: &V,
     extent: Extent,
     normal: Normal,
@@ -169,33 +93,98 @@ where
                 normal,
             );
 
-            boundary_quads_in_plane(voxels, &extent, quad)
+            greedy_quads_in_plane(voxels, &extent, quad)
         })
         .flatten()
         .collect()
 }
 
-/// Returns all same-type quads of visible faces (only intersecting one voxel). The set of quads is
-/// not unique and is not guaranteed to be optimal.
-fn boundary_quads<V, T, M>(voxels: &V, extent: Extent) -> Vec<(Quad, M)>
+/// Greedily find visible quads (of the same type) in the plane.
+fn greedy_quads_in_plane<V, T, M>(voxels: &V, extent: &Extent, plane: Quad) -> Vec<(Quad, M)>
 where
-    V: GetWorldRef<Data = T> + Send + Sync,
+    V: GetWorldRef<Data = T>,
     T: GreedyQuadsVoxel<Material = M>,
-    M: Eq + Send + Sync,
+    M: Eq,
 {
-    ALL_DIRECTIONS
-        .par_iter()
-        .cloned()
-        .map(|d| boundary_quads_unidirectional(voxels, extent, Normal::Axis(d)))
-        .flatten()
-        .collect()
+    let Quad {
+        extent: quad_extent,
+        normal,
+    } = plane;
+    let PlaneSpanInfo { u, v } = normal.get_plane_span_info();
+    let n = Point::from(normal);
+
+    let mut visited = VecLatticeMap::<_, YLevelsIndexer>::fill(quad_extent, false);
+
+    let mut quads = vec![];
+    for p in &quad_extent {
+        let p_val = voxels.get_world_ref(&p);
+        if p_val.is_empty() || visited.get_world(&p) {
+            continue;
+        }
+
+        let face = Face::new(p, Normal::Vector(n));
+
+        if !face.is_visible(voxels, extent) {
+            continue;
+        }
+
+        let point_can_join_quad = |q: &Point| {
+            if !extent.contains_world(q) {
+                return false;
+            }
+            let q_val = voxels.get_world_ref(q);
+
+            !q_val.is_empty()
+                && !visited.get_world_ref(q)
+                && Face::new(*q, Normal::Vector(n)).is_visible(voxels, extent)
+                && p_val.material() == q_val.material()
+        };
+
+        let quad_extent = grow_quad_extent(&p, &u, &v, &point_can_join_quad);
+        fill_extent(&mut visited, &quad_extent, true);
+        quads.push((Quad::new(quad_extent, normal), p_val.material()));
+    }
+
+    quads
+}
+
+/// This is the "greedy" part of finding quads.
+fn grow_quad_extent(
+    min: &Point,
+    u: &Point,
+    v: &Point,
+    point_can_join_quad_fn: &impl Fn(&Point) -> bool,
+) -> Extent {
+    // Grow quad:
+    // (1) in u direction until reaching a point that can't join.
+    let mut max = *min;
+    loop {
+        let next_max = max + *u;
+        if !point_can_join_quad_fn(&next_max) {
+            break;
+        }
+        max = next_max;
+    }
+    // (2) in v direction until reaching row that can't join (entirely).
+    let mut row = Extent::from_min_and_world_max(*min, max);
+    'outer: loop {
+        let next_row = row + *v;
+        for row_p in next_row {
+            if !point_can_join_quad_fn(&row_p) {
+                break 'outer;
+            }
+        }
+        row = next_row;
+    }
+
+    Extent::from_min_and_world_max(*min, row.get_world_max())
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    use crate::PosNormTangTexQuadMeshFactory;
+    use crate::make_pos_norm_tang_tex_mesh_from_quads;
 
     use ilattice3::{FnLatticeMap, VecLatticeMap, YLevelsIndexer};
     use std::io::Write;
@@ -238,10 +227,8 @@ mod test {
         );
 
         let start = std::time::Instant::now();
-        let _output = greedy_quads::<_, _, _, PosNormTangTexQuadMeshFactory<u16>>(
-            &samples,
-            *samples.get_extent(),
-        );
+        let quads = greedy_quads(&samples, *samples.get_extent());
+        let _mesh = make_pos_norm_tang_tex_mesh_from_quads(&quads);
         let elapsed_micros = start.elapsed().as_micros();
         std::io::stdout()
             .write(format!("greedy_quads took {} micros\n", elapsed_micros).as_bytes())
