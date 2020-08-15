@@ -23,12 +23,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::SignedDistanceVoxel;
+
 use ilattice3 as lat;
 use ilattice3::{prelude::*, Extent, HasIndexer, Indexer, CUBE_CORNERS};
-
-pub trait SurfaceNetsVoxel {
-    fn distance(&self) -> f32;
-}
 
 pub struct SurfaceNetsOutput {
     /// Coordinates of every voxel that intersects the isosurface. In padded-chunk-local
@@ -50,7 +48,7 @@ pub fn surface_nets<V, T, I>(voxels: &V, extent: &Extent) -> SurfaceNetsOutput
 where
     // It saves quite a bit of time to do linear indexing.
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
-    T: SurfaceNetsVoxel,
+    T: SignedDistanceVoxel,
     I: Indexer,
 {
     let local_extent = extent.with_minimum([0, 0, 0].into());
@@ -90,7 +88,7 @@ fn estimate_surface<V, T, I>(
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<Point>, Vec<usize>)
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
-    T: SurfaceNetsVoxel,
+    T: SignedDistanceVoxel,
     I: Indexer,
 {
     // Precalculate these offsets to do faster linear indexing.
@@ -150,7 +148,7 @@ fn estimate_surface_point<V, T>(
 ) -> Option<([f32; 3], [f32; 3])>
 where
     V: GetLinear<Data = T>,
-    T: SurfaceNetsVoxel,
+    T: SignedDistanceVoxel,
 {
     // Get the signed distance values at each corner of this cube.
     let mut dists = [0.0; 8];
@@ -236,7 +234,7 @@ fn make_all_quads<V, T, I>(
 ) -> Vec<usize>
 where
     V: GetLinear<Data = T> + HasIndexer<Indexer = I>,
-    T: SurfaceNetsVoxel,
+    T: SignedDistanceVoxel,
     I: Indexer,
 {
     let mut indices = Vec::new();
@@ -337,7 +335,7 @@ fn maybe_make_quad<V, T>(
     indices: &mut Vec<usize>,
 ) where
     V: GetLinear<Data = T>,
-    T: SurfaceNetsVoxel,
+    T: SignedDistanceVoxel,
 {
     let voxel1 = voxels.get_linear(i1);
     let voxel2 = voxels.get_linear(i2);
@@ -404,7 +402,7 @@ mod test {
     #[derive(Clone)]
     struct Voxel(f32);
 
-    impl SurfaceNetsVoxel for Voxel {
+    impl SignedDistanceVoxel for Voxel {
         fn distance(&self) -> f32 {
             self.0
         }
