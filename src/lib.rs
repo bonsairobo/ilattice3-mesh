@@ -11,7 +11,7 @@ mod surface_nets;
 mod voxel_traits;
 
 pub use greedy_quads::{greedy_quads, GreedyQuadsVoxel};
-pub use material_weights::calculate_material_weights;
+pub use material_weights::{calculate_material_weights, MATERIAL_WEIGHT_TABLE};
 pub use quad::Quad;
 pub use quad_mesh_factory::{
     make_pos_norm_material_mesh_from_quads, make_pos_norm_tang_tex_mesh_from_quads,
