@@ -26,7 +26,7 @@
 use crate::SignedDistanceVoxel;
 
 use ilattice3 as lat;
-use ilattice3::{prelude::*, Extent, HasIndexer, Indexer, CUBE_CORNERS};
+use ilattice3::{point::CUBE_CORNERS, prelude::*, Extent};
 
 pub struct SurfaceNetsOutput {
     /// Coordinates of every voxel that intersects the isosurface. In padded-chunk-local

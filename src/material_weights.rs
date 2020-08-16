@@ -1,6 +1,6 @@
 use crate::{MaterialVoxel, SignedDistanceVoxel};
 
-use ilattice3::{prelude::*, Indexer, Point, CUBE_CORNERS};
+use ilattice3::{point::CUBE_CORNERS, prelude::*, Point};
 
 /// Uses a kernel to average the adjacent materials for each surface point.
 pub fn calculate_material_weights<V, T, I>(voxels: &V, surface_points: &[Point]) -> Vec<[f32; 4]>

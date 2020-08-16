@@ -1,8 +1,10 @@
 use crate::{face::Face, quad::Quad};
 
 use ilattice3::{
-    fill_extent, prelude::*, Direction, Extent, IsEmpty, Normal, PlaneSpanInfo, Point,
-    VecLatticeMap, YLevelsIndexer, ALL_DIRECTIONS,
+    fill_extent,
+    normal::{Direction, Normal, PlaneSpanInfo, ALL_DIRECTIONS},
+    prelude::*,
+    Extent, IsEmpty, Point, VecLatticeMap, YLevelsIndexer,
 };
 use rayon::prelude::*;
 

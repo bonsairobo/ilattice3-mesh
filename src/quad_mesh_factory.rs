@@ -1,6 +1,6 @@
 use crate::quad::{Quad, QuadCornerInfo};
 
-use ilattice3::{PlaneSpanInfo, Point};
+use ilattice3::{normal::PlaneSpanInfo, Point};
 use std::cmp::{Ord, Ordering};
 use std::{collections::HashMap, hash::Hash};
 

@@ -1,4 +1,4 @@
-use ilattice3::{prelude::*, Extent, IsEmpty, Normal};
+use ilattice3::{normal::Normal, prelude::*, Extent, IsEmpty};
 
 /// One face of a voxel.
 pub struct Face {

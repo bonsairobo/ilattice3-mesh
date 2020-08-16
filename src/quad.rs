@@ -1,4 +1,7 @@
-use ilattice3::{Extent, Normal, PlaneSpanInfo, Point};
+use ilattice3::{
+    normal::{Normal, PlaneSpanInfo},
+    Extent, Point,
+};
 
 /// The face of a rectangular prism of voxels.
 #[derive(Clone, Copy, Debug, PartialEq)]
